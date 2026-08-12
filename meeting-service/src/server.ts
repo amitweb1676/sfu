@@ -13,10 +13,25 @@ async function bootstrap() {
   app.use(express.json());
 
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", service: "meeting-service", phase: 1 });
+    res.json({ status: "ok", service: "meeting-service"});
   });
 
   const httpServer = http.createServer(app);
+
+  httpServer.on("upgrade", (request, socket, head) => {
+    console.log("\n========== WEBSOCKET UPGRADE ==========");
+    console.log("URL:", request.url);
+    console.log("Method:", request.method);
+    console.log("Headers:", request.headers);
+    console.log("Upgrade:", request.headers.upgrade);
+    console.log("Connection:", request.headers.connection);
+    console.log("Sec-WebSocket-Key:", request.headers["sec-websocket-key"]);
+    console.log(
+      "Sec-WebSocket-Version:",
+      request.headers["sec-websocket-version"]
+    );
+    console.log("=======================================\n");
+  });
 
   const io = new Server(httpServer, {
     cors: { origin: config.corsOrigin, methods: ["GET", "POST"] },
