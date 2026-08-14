@@ -67,15 +67,38 @@ export function registerSignallingHandlers(io: Server) {
       }
     });
 
-    // Helper for creating WebRTC transport
-    const handleCreateTransport = async (direction: "send" | "recv", callback: (res: any) => void) => {
+    // Robust helper for creating WebRTC transport
+    const handleCreateTransport = async (
+      direction: "send" | "recv",
+      payloadOrCb: any,
+      maybeCb?: (res: any) => void
+    ) => {
+      const callback = typeof payloadOrCb === "function" ? payloadOrCb : maybeCb;
+      const payload = typeof payloadOrCb === "object" ? payloadOrCb : {};
+      const roomId = payload?.roomId || currentRoomId;
+
+      logger.info(`[Signalling] create-${direction}-transport request | socket=${socket.id} | room=${roomId}`);
+
+      if (!roomId) {
+        logger.error(`[Signalling] create-${direction}-transport failed: Not in a room (socket: ${socket.id})`);
+        if (typeof callback === "function") {
+          callback({ success: false, error: "Not in a room" });
+        }
+        return;
+      }
+
       try {
-        if (!currentRoomId) return callback({ success: false, error: "Not in a room" });
-        const room = getRoom(currentRoomId);
-        if (!room) return callback({ success: false, error: "Room not found" });
+        const room = getRoom(roomId);
+        if (!room) {
+          logger.error(`[Signalling] create-${direction}-transport: Room ${roomId} not found`);
+          if (typeof callback === "function") {
+            callback({ success: false, error: "Room not found" });
+          }
+          return;
+        }
 
         const transport = await createWebRtcTransport(room.router);
-        setTransport(currentRoomId, socket.id, direction, transport);
+        setTransport(roomId, socket.id, direction, transport);
 
         const transportParams = {
           id: transport.id,
@@ -84,27 +107,32 @@ export function registerSignallingHandlers(io: Server) {
           dtlsParameters: transport.dtlsParameters,
         };
 
-        callback({
-          success: true,
-          transportOptions: transportParams,
-          transportParams: transportParams,
-        });
-      } catch (err) {
-        logger.error(`create-${direction}-transport failed:`, err);
-        callback({ success: false, error: "Failed to create transport" });
+        logger.info(`[Signalling] ✅ create-${direction}-transport success: ${transport.id}`);
+        if (typeof callback === "function") {
+          callback({
+            success: true,
+            transportOptions: transportParams,
+            transportParams: transportParams,
+          });
+        }
+      } catch (err: any) {
+        logger.error(`[Signalling] ❌ create-${direction}-transport failed:`, err);
+        if (typeof callback === "function") {
+          callback({ success: false, error: err.message || "Failed to create transport" });
+        }
       }
     };
 
-    socket.on("create-send-transport", (_payload: unknown, callback: (res: any) => void) => {
-      handleCreateTransport("send", callback);
+    socket.on("create-send-transport", (arg1: any, arg2?: any) => {
+      handleCreateTransport("send", arg1, arg2);
     });
 
-    socket.on("create-recv-transport", (_payload: unknown, callback: (res: any) => void) => {
-      handleCreateTransport("recv", callback);
+    socket.on("create-recv-transport", (arg1: any, arg2?: any) => {
+      handleCreateTransport("recv", arg1, arg2);
     });
 
-    socket.on("create-transport", ({ direction }: { direction: "send" | "recv" }, callback: (res: any) => void) => {
-      handleCreateTransport(direction, callback);
+    socket.on("create-transport", (payload: { direction: "send" | "recv"; roomId?: string }, callback: (res: any) => void) => {
+      handleCreateTransport(payload?.direction || "send", payload, callback);
     });
 
     // Helper for connecting WebRTC transport
