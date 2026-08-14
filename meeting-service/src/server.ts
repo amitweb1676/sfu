@@ -43,7 +43,7 @@ async function bootstrap() {
   registerSignallingHandlers(io);
 
   httpServer.listen(config.port, () => {
-    logger.info(`meeting-service listening on port ${config.port}`);
+    logger.info(`meeting-service listening on port ${config.port}  updated     22222222222222222222222222222222222222222222222222222222222111111111111111111111111111111111111111111111111111111111111111111111111111111`);
   });
 }
 
