@@ -19,7 +19,8 @@ import { logger } from "../utils/logger";
 
 export function registerSignallingHandlers(io: Server) {
   io.on("connection", (socket: Socket) => {
-    logger.info(`Socket connected: ${socket.id}`);
+    logger.info(`[Signalling] [UPDATED ONE] Socket connected: ${socket.id}`);
+    socket.emit("server-version", { version: "UPDATED ONE", timestamp: Date.now() });
 
     let currentRoomId: string | null = null;
 
