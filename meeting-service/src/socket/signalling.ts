@@ -26,7 +26,7 @@ export function registerSignallingHandlers(io: Server) {
     // --- Phase 1 & 2: join room ---
     socket.on("join-room", async (
       payload: { roomId: string; displayName?: string; userId?: string; avatar?: string; role?: string },
-      callback: (res: { success: boolean; rtpCapabilities?: unknown; error?: string }) => void
+      callback: (res: any) => void
     ) => {
       try {
         const { roomId, displayName, userId, avatar, role } = payload;
@@ -54,15 +54,16 @@ export function registerSignallingHandlers(io: Server) {
         if (typeof callback === "function") {
           callback({
             success: true,
+            serverVersion: "updated one",
             rtpCapabilities: room.router.rtpCapabilities,
           });
         }
 
-        logger.info(`${displayName || "Participant"} (${socket.id}) joined room ${roomId}`);
+        logger.info(`[Signalling] [updated one] ${displayName || "Participant"} (${socket.id}) joined room ${roomId}`);
       } catch (err) {
-        logger.error("join-room failed:", err);
+        logger.error("[Signalling] [updated one] join-room failed:", err);
         if (typeof callback === "function") {
-          callback({ success: false, error: "Failed to join room" });
+          callback({ success: false, serverVersion: "updated one", error: "Failed to join room" });
         }
       }
     });
@@ -77,12 +78,12 @@ export function registerSignallingHandlers(io: Server) {
       const payload = typeof payloadOrCb === "object" ? payloadOrCb : {};
       const roomId = payload?.roomId || currentRoomId;
 
-      logger.info(`[Signalling] create-${direction}-transport request | socket=${socket.id} | room=${roomId}`);
+      logger.info(`[Signalling] [updated one] create-${direction}-transport request | socket=${socket.id} | room=${roomId}`);
 
       if (!roomId) {
-        logger.error(`[Signalling] create-${direction}-transport failed: Not in a room (socket: ${socket.id})`);
+        logger.error(`[Signalling] [updated one] create-${direction}-transport failed: Not in a room (socket: ${socket.id})`);
         if (typeof callback === "function") {
-          callback({ success: false, error: "Not in a room" });
+          callback({ success: false, serverVersion: "updated one", error: "Not in a room" });
         }
         return;
       }
@@ -90,9 +91,9 @@ export function registerSignallingHandlers(io: Server) {
       try {
         const room = getRoom(roomId);
         if (!room) {
-          logger.error(`[Signalling] create-${direction}-transport: Room ${roomId} not found`);
+          logger.error(`[Signalling] [updated one] create-${direction}-transport: Room ${roomId} not found`);
           if (typeof callback === "function") {
-            callback({ success: false, error: "Room not found" });
+            callback({ success: false, serverVersion: "updated one", error: "Room not found" });
           }
           return;
         }
@@ -107,18 +108,19 @@ export function registerSignallingHandlers(io: Server) {
           dtlsParameters: transport.dtlsParameters,
         };
 
-        logger.info(`[Signalling] ✅ create-${direction}-transport success: ${transport.id}`);
+        logger.info(`[Signalling] ✅ [updated one] create-${direction}-transport success: ${transport.id}`);
         if (typeof callback === "function") {
           callback({
             success: true,
+            serverVersion: "updated one",
             transportOptions: transportParams,
             transportParams: transportParams,
           });
         }
       } catch (err: any) {
-        logger.error(`[Signalling] ❌ create-${direction}-transport failed:`, err);
+        logger.error(`[Signalling] ❌ [updated one] create-${direction}-transport failed:`, err);
         if (typeof callback === "function") {
-          callback({ success: false, error: err.message || "Failed to create transport" });
+          callback({ success: false, serverVersion: "updated one", error: err.message || "Failed to create transport" });
         }
       }
     };
