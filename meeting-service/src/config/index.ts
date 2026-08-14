@@ -6,7 +6,7 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN || "*",
   mediasoup: {
     minPort: Number(process.env.MEDIASOUP_MIN_PORT) || 40000,
-    maxPort: Number(process.env.MEDIASOUP_MAX_PORT) || 40100,
+    maxPort: Number(process.env.MEDIASOUP_MAX_PORT) || 49999,
     announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || "127.0.0.1",
   },
 };
