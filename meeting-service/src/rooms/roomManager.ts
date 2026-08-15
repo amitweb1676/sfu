@@ -33,7 +33,25 @@ export function getRoom(roomId: string): Room | undefined {
   return rooms.get(roomId);
 }
 
+export function getRoomBySocketId(socketId: string): Room | undefined {
+  for (const room of rooms.values()) {
+    if (room.participants.has(socketId)) {
+      return room;
+    }
+  }
+  return undefined;
+}
+
+export function getParticipantBySocketId(socketId: string): Participant | undefined {
+  for (const room of rooms.values()) {
+    const p = room.participants.get(socketId);
+    if (p) return p;
+  }
+  return undefined;
+}
+
 export function addParticipant(
+
   roomId: string,
   socketId: string,
   userDetails: { displayName: string; userId?: string; avatar?: string; role?: string } | string

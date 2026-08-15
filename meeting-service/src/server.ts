@@ -6,11 +6,23 @@ import { config } from "./config";
 import { createMediasoupWorker } from "./mediasoup/worker";
 import { registerSignallingHandlers } from "./socket/signalling";
 import { logger } from "./utils/logger";
+import { sfuDebug } from "./utils/debugLogger";
 
 async function bootstrap() {
+  sfuDebug("Server environment", {
+    nodeEnv: process.env.NODE_ENV,
+    port: config.port,
+    corsOrigin: config.corsOrigin,
+    mediasoupAnnouncedIp: config.mediasoup.announcedIp,
+    rtcMinPort: config.mediasoup.minPort,
+    rtcMaxPort: config.mediasoup.maxPort,
+    debugSfu: config.debugSfu,
+  });
+
   const app = express();
   app.use(cors({ origin: config.corsOrigin }));
   app.use(express.json());
+
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", service: "meeting-service"});
