@@ -1,15 +1,10 @@
 import { getWorker } from "../mediasoup/worker";
 import { mediaCodecs } from "../mediasoup/mediaCodecs";
 import { Room, Participant } from "../types";
-import { logger } from "../utils/logger";
 import { WebRtcTransport, Producer, Consumer } from "mediasoup/node/lib/types";
 
 const rooms: Map<string, Room> = new Map();
 
-/**
- * Returns an existing room, or creates a new one with its own router.
- * One router per room — this is the core SFU foundation rule.
- */
 export async function getOrCreateRoom(roomId: string): Promise<Room> {
   const existing = rooms.get(roomId);
   if (existing) return existing;
@@ -25,7 +20,6 @@ export async function getOrCreateRoom(roomId: string): Promise<Room> {
   };
 
   rooms.set(roomId, room);
-  logger.info(`Room created: ${roomId}`);
   return room;
 }
 
@@ -51,7 +45,6 @@ export function getParticipantBySocketId(socketId: string): Participant | undefi
 }
 
 export function addParticipant(
-
   roomId: string,
   socketId: string,
   userDetails: { displayName: string; userId?: string; avatar?: string; role?: string } | string
@@ -74,19 +67,15 @@ export function addParticipant(
   return participant;
 }
 
-/**
- * Called right after addParticipant() in Phase 1 join-room handler.
- * Attaches empty media containers to the participant record.
- */
 export function attachMediaContainers(roomId: string, socketId: string): void {
   const room = rooms.get(roomId);
   if (!room) return;
   const participant = room.participants.get(socketId);
   if (!participant) return;
 
-  participant.transports = {}; // { send: transport, recv: transport }
-  participant.producers = {};  // { audio: producer, video: producer }
-  participant.consumers = {};  // { [consumerId]: consumer }
+  participant.transports = {};
+  participant.producers = {};
+  participant.consumers = {};
 }
 
 export function setTransport(
@@ -182,30 +171,22 @@ export function addConsumer(roomId: string, socketId: string, consumer: Consumer
   participant.consumers[consumer.id] = consumer;
 }
 
-/**
- * Clean up participant and close all underlying media resources (producers, consumers, transports)
- */
 export function removeParticipant(roomId: string, socketId: string): void {
   const room = rooms.get(roomId);
   if (!room) return;
 
   const participant = room.participants.get(socketId);
   if (participant) {
-    // Close producers
     Object.values(participant.producers || {}).forEach((p) => p && p.close());
-    // Close consumers
     Object.values(participant.consumers || {}).forEach((c) => c && c.close());
-    // Close transports
     Object.values(participant.transports || {}).forEach((t) => t && t.close());
   }
 
   room.participants.delete(socketId);
-  logger.info(`Participant ${socketId} left room ${roomId}`);
 
   if (room.participants.size === 0) {
     room.router.close();
     rooms.delete(roomId);
-    logger.info(`Room closed (empty): ${roomId}`);
   }
 }
 

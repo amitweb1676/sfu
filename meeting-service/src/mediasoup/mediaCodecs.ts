@@ -1,8 +1,5 @@
 import { RouterRtpCodecCapability } from "mediasoup/node/lib/types";
 
-// Standard codec set used by mediasoup for audio/video.
-// Only defined now so the router can be created correctly.
-// Actual audio/video producing/consuming happens in Phase 2.
 export const mediaCodecs: RouterRtpCodecCapability[] = [
   {
     kind: "audio",
@@ -19,4 +16,3 @@ export const mediaCodecs: RouterRtpCodecCapability[] = [
     },
   },
 ];
-
