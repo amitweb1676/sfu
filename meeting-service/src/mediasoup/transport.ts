@@ -32,6 +32,10 @@ export async function createWebRtcTransport(
   const rtcMinPort = config.mediasoup.minPort;
   const rtcMaxPort = config.mediasoup.maxPort;
 
+  logger.info(
+    `Creating WebRTC transport: direction=${meta?.direction || "unknown"} | socketId=${meta?.socketId || "unknown"} | announcedIp=${announcedIp} | ports=${rtcMinPort}-${rtcMaxPort}`
+  );
+
   let transport: WebRtcTransport;
   try {
     transport = await (router as any).createWebRtcTransport({
@@ -55,6 +59,7 @@ export async function createWebRtcTransport(
       initialAvailableOutgoingBitrate: 1000000,
     });
   } catch (err) {
+    logger.warn(`Failed to create WebRTC transport using listenInfos, falling back to listenIps API. Error: ${err instanceof Error ? err.message : String(err)}`);
     transport = await router.createWebRtcTransport({
       listenIps: [
         {
@@ -71,6 +76,8 @@ export async function createWebRtcTransport(
 
   attachTransportEvents(transport);
 
-  logger.info(`[Transport] WebRTC transport created: id=${transport.id} (${meta?.direction || "unknown"})`);
+  logger.info(
+    `[Transport] WebRTC transport successfully created: id=${transport.id} (${meta?.direction || "unknown"}) | announcedIp=${announcedIp}`
+  );
   return transport;
 }
