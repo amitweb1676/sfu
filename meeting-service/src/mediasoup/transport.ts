@@ -12,9 +12,9 @@ export interface TransportMeta {
 function attachTransportEvents(transport: WebRtcTransport) {
   transport.on("icestatechange", (iceState) => {
     logger.info(`[Transport] ICE state: ${iceState} for transport ${transport.id}`);
-  });
-
+  }); 
   transport.on("dtlsstatechange", (dtlsState) => {
+
     logger.info(`[Transport] DTLS state: ${dtlsState} for transport ${transport.id}`);
 
     if (dtlsState === "failed" || dtlsState === "closed") {

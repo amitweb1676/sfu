@@ -18,12 +18,17 @@ import {
   getParticipantBySocketId,
 } from "../rooms/roomManager";
 import { logger } from "../utils/logger";
+import { config } from "../config";
 
 export function registerSignallingHandlers(io: Server) {
   io.on("connection", (socket: Socket) => {
     logger.info(`Socket connected: ${socket.id}`);
 
-    socket.emit("server-version", { version: "UPDATED ONE", timestamp: Date.now() });
+    socket.emit("server-version", {
+      version: "UPDATED ONE",
+      timestamp: Date.now(),
+      iceServers: config.iceServers,
+    });
 
     let currentRoomId: string | null = null;
 
@@ -70,6 +75,7 @@ export function registerSignallingHandlers(io: Server) {
               success: true,
               serverVersion: "updated one",
               rtpCapabilities: room.router.rtpCapabilities,
+              iceServers: config.iceServers,
             });
           }
         } catch (err: any) {
@@ -125,6 +131,7 @@ export function registerSignallingHandlers(io: Server) {
           iceCandidates: transport.iceCandidates,
           dtlsParameters: transport.dtlsParameters,
           sctpParameters: transport.sctpParameters,
+          iceServers: config.iceServers,
         };
 
         if (typeof callback === "function") {
@@ -133,6 +140,7 @@ export function registerSignallingHandlers(io: Server) {
             serverVersion: "updated one",
             transportOptions,
             transportParams: transportOptions,
+            iceServers: config.iceServers,
           });
         }
       } catch (err: any) {
