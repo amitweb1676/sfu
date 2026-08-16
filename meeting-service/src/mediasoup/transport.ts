@@ -40,13 +40,11 @@ export async function createWebRtcTransport(
           protocol: "udp",
           ip: "0.0.0.0",
           announcedAddress: announcedIp,
-          portRange: { min: rtcMinPort, max: rtcMaxPort },
         },
         {
           protocol: "tcp",
           ip: "0.0.0.0",
           announcedAddress: announcedIp,
-          portRange: { min: rtcMinPort, max: rtcMaxPort },
         },
       ],
       enableUdp: true,
@@ -55,6 +53,7 @@ export async function createWebRtcTransport(
       initialAvailableOutgoingBitrate: 1000000,
     });
   } catch (err) {
+    logger.warn(`[Transport] listenInfos failed, falling back to listenIps: ${(err as Error).message}`);
     transport = await router.createWebRtcTransport({
       listenIps: [
         {
@@ -71,6 +70,11 @@ export async function createWebRtcTransport(
 
   attachTransportEvents(transport);
 
-  logger.info(`[Transport] WebRTC transport created: id=${transport.id} (${meta?.direction || "unknown"})`);
+  const candidateSummary = transport.iceCandidates
+    ?.map((c) => `${c.protocol}:${c.ip || (c as any).address}:${c.port}`)
+    .join(", ");
+  logger.info(
+    `[Transport] WebRTC transport created: id=${transport.id} (${meta?.direction || "unknown"}), candidates=[${candidateSummary}]`
+  );
   return transport;
 }
