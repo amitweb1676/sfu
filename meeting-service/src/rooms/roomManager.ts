@@ -1,4 +1,4 @@
-import { getWorker } from "../mediasoup/worker";
+import { getNextWorker, getWorker } from "../mediasoup/worker";
 import { mediaCodecs } from "../mediasoup/mediaCodecs";
 import { Room, Participant } from "../types";
 import { WebRtcTransport, Producer, Consumer } from "mediasoup/node/lib/types";
@@ -9,7 +9,7 @@ export async function getOrCreateRoom(roomId: string): Promise<Room> {
   const existing = rooms.get(roomId);
   if (existing) return existing;
 
-  const worker = getWorker();
+  const worker = getNextWorker();
   const router = await worker.createRouter({ mediaCodecs });
 
   const room: Room = {

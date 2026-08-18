@@ -328,6 +328,26 @@ export function registerSignallingHandlers(io: Server) {
       }
     );
 
+        socket.on("set-consumer-layers", async ({ consumerId, spatialLayer, temporalLayer }: { consumerId: string; spatialLayer: number; temporalLayer?: number }, callback?: (res: any) => void) => {
+      try {
+        const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+        if (!roomId) return callback && callback({ success: false, error: "Not in a room" });
+
+        const room = getRoom(roomId);
+        const participant = room?.participants.get(socket.id);
+        const consumer = participant?.consumers?.[consumerId];
+        if (!consumer) {
+          return callback && callback({ success: false, error: "Consumer not found" });
+        }
+
+        await consumer.setPreferredLayers({ spatialLayer, temporalLayer });
+        if (typeof callback === "function") callback({ success: true });
+      } catch (err: any) {
+        logger.error("set-consumer-layers failed:", err);
+        if (typeof callback === "function") callback({ success: false, error: err.message });
+      }
+    });
+
     socket.on("resume-consumer", async ({ consumerId }: { consumerId: string }, callback: (res: any) => void) => {
       try {
         const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;

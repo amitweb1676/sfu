@@ -36,8 +36,6 @@ export async function createWebRtcTransport(
   meta?: TransportMeta
 ): Promise<WebRtcTransport> {
   const announcedIp = config.mediasoup.announcedIp;
-  const rtcMinPort = config.mediasoup.minPort;
-  const rtcMaxPort = config.mediasoup.maxPort;
 
   const transport = await router.createWebRtcTransport({
     listenIps: [
