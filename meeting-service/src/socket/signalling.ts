@@ -374,6 +374,46 @@ export function registerSignallingHandlers(io: Server) {
       }
     });
 
+    socket.on("pause-producer", async ({ producerId }: { producerId: string }, callback?: (res: any) => void) => {
+      try {
+        const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+        if (!roomId) return callback && callback({ success: false, error: "Not in a room" });
+
+        const producer = findProducer(roomId, producerId);
+        if (!producer) {
+          logger.warn(`pause-producer: Producer ${producerId} not found`);
+          return callback && callback({ success: false, error: "Producer not found" });
+        }
+
+        await producer.pause();
+        socket.to(roomId).emit("producer-paused", { producerId, socketId: socket.id });
+        if (typeof callback === "function") callback({ success: true });
+      } catch (err: any) {
+        logger.error("pause-producer failed:", err);
+        if (typeof callback === "function") callback({ success: false, error: err.message });
+      }
+    });
+
+    socket.on("resume-producer", async ({ producerId }: { producerId: string }, callback?: (res: any) => void) => {
+      try {
+        const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+        if (!roomId) return callback && callback({ success: false, error: "Not in a room" });
+
+        const producer = findProducer(roomId, producerId);
+        if (!producer) {
+          logger.warn(`resume-producer: Producer ${producerId} not found`);
+          return callback && callback({ success: false, error: "Producer not found" });
+        }
+
+        await producer.resume();
+        socket.to(roomId).emit("producer-resumed", { producerId, socketId: socket.id });
+        if (typeof callback === "function") callback({ success: true });
+      } catch (err: any) {
+        logger.error("resume-producer failed:", err);
+        if (typeof callback === "function") callback({ success: false, error: err.message });
+      }
+    });
+
     socket.on("get-producers", (_payload: unknown, callback: (res: any) => void) => {
       const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
 
