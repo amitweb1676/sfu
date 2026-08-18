@@ -164,11 +164,56 @@ export function findProducer(roomId: string, producerId: string): Producer | nul
   return null;
 }
 
+export function getProducersInRoom(roomId: string): Producer[] {
+  const room = rooms.get(roomId);
+  if (!room) return [];
+  const producers: Producer[] = [];
+  for (const participant of room.participants.values()) {
+    for (const producer of Object.values(participant.producers || {})) {
+      if (producer && !producer.closed) {
+        producers.push(producer);
+      }
+    }
+  }
+  return producers;
+}
+
+export function addProducer(roomId: string, producer: Producer, socketId: string): void {
+  setProducer(roomId, socketId, producer.kind, producer);
+}
+
+export function getTransportById(roomId: string, transportId: string): WebRtcTransport | undefined {
+  const room = rooms.get(roomId);
+  if (!room) return undefined;
+  for (const participant of room.participants.values()) {
+    if (participant.transports) {
+      for (const transport of Object.values(participant.transports)) {
+        if (transport && transport.id === transportId) return transport;
+      }
+    }
+  }
+  return undefined;
+}
+
+export function getRouter(roomId: string) {
+  return rooms.get(roomId)?.router;
+}
+
 export function addConsumer(roomId: string, socketId: string, consumer: Consumer): void {
   const participant = rooms.get(roomId)?.participants.get(socketId);
   if (!participant) return;
   if (!participant.consumers) participant.consumers = {};
   participant.consumers[consumer.id] = consumer;
+}
+
+export function findConsumer(socketId: string, consumerId: string): Consumer | undefined {
+  for (const room of rooms.values()) {
+    const participant = room.participants.get(socketId);
+    if (participant && participant.consumers?.[consumerId]) {
+      return participant.consumers[consumerId];
+    }
+  }
+  return undefined;
 }
 
 export function removeParticipant(roomId: string, socketId: string): void {
@@ -187,6 +232,14 @@ export function removeParticipant(roomId: string, socketId: string): void {
   if (room.participants.size === 0) {
     room.router.close();
     rooms.delete(roomId);
+  }
+}
+
+export function removeAllProducersAndConsumersFor(socketId: string): void {
+  for (const [roomId, room] of rooms.entries()) {
+    if (room.participants.has(socketId)) {
+      removeParticipant(roomId, socketId);
+    }
   }
 }
 

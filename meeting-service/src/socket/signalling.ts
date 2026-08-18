@@ -9,21 +9,25 @@ import {
   attachMediaContainers,
   setTransport,
   getTransport,
+  getTransportById,
   setProducer,
+  addProducer,
   getAllProducersExcept,
+  getProducersInRoom,
   findProducer,
   addConsumer,
+  findConsumer,
+  removeAllProducersAndConsumersFor,
   getRoom,
   getRoomBySocketId,
   getParticipantBySocketId,
+  getRouter,
 } from "../rooms/roomManager";
 import { logger } from "../utils/logger";
 import { config } from "../config";
 
 export function registerSignallingHandlers(io: Server) {
   io.on("connection", (socket: Socket) => {
-    logger.info(`Socket connected: ${socket.id}`);
-
     socket.emit("server-version", {
       version: "UPDATED ONE",
       timestamp: Date.now(),
@@ -42,7 +46,6 @@ export function registerSignallingHandlers(io: Server) {
           const { roomId, displayName, userId, avatar, role } = payload || {};
 
           if (!roomId) {
-            logger.error(`join-room failed: roomId is required (socket: ${socket.id})`);
             if (typeof callback === "function") {
               callback({ success: false, error: "roomId is required" });
             }
@@ -97,7 +100,6 @@ export function registerSignallingHandlers(io: Server) {
       const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
 
       if (!roomId) {
-        logger.error(`create-${direction}-transport failed: Not in a room (socket: ${socket.id})`);
         if (typeof callback === "function") {
           callback({ success: false, serverVersion: "updated one", error: "Not in a room" });
         }
@@ -107,7 +109,6 @@ export function registerSignallingHandlers(io: Server) {
       try {
         const room = getRoom(roomId);
         if (!room) {
-          logger.error(`create-${direction}-transport failed: Room ${roomId} not found (socket: ${socket.id})`);
           if (typeof callback === "function") {
             callback({ success: false, serverVersion: "updated one", error: "Room not found" });
           }
@@ -176,17 +177,15 @@ export function registerSignallingHandlers(io: Server) {
       callback: (res: any) => void
     ) => {
       try {
-        const { dtlsParameters } = data || {};
+        const { dtlsParameters, transportId } = data || {};
         const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
 
         if (!roomId) {
-          logger.error(`connect-${direction}-transport failed: Not in a room (socket: ${socket.id})`);
           return callback && callback({ success: false, error: "Not in a room" });
         }
 
-        const transport = getTransport(roomId, socket.id, direction);
+        const transport = (transportId ? getTransportById(roomId, transportId) : undefined) || getTransport(roomId, socket.id, direction);
         if (!transport) {
-          logger.error(`connect-${direction}-transport failed: ${direction} transport not found (socket: ${socket.id})`);
           return callback && callback({ success: false, error: `${direction} transport not found` });
         }
 
@@ -207,8 +206,23 @@ export function registerSignallingHandlers(io: Server) {
       handleConnectTransport("send", data, callback);
     });
 
-    socket.on("connect-recv-transport", (data: any, callback: (res: any) => void) => {
-      handleConnectTransport("recv", data, callback);
+    socket.on("connect-recv-transport", async ({ transportId, dtlsParameters }: any, callback: (res: any) => void) => {
+      const roomId = getRoomBySocketId(socket.id)?.roomId || currentRoomId;
+      if (!roomId) {
+        if (typeof callback === "function") callback({ success: false, error: "No room" });
+        return;
+      }
+      const transport = (transportId ? getTransportById(roomId, transportId) : undefined) || getTransport(roomId, socket.id, "recv");
+      if (!transport) {
+        if (typeof callback === "function") callback({ success: false, error: "Recv transport not found" });
+        return;
+      }
+      try {
+        await transport.connect({ dtlsParameters });
+        callback({ success: true });
+      } catch (err: any) {
+        callback({ success: false, error: err.message });
+      }
     });
 
     socket.on(
@@ -218,117 +232,146 @@ export function registerSignallingHandlers(io: Server) {
       }
     );
 
-    socket.on(
-      "produce",
-      async ({ kind, rtpParameters, appData }: { kind: any; rtpParameters: any; appData?: any }, callback: (res: any) => void) => {
-        try {
-          const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
-          if (!roomId) {
-            logger.error(`produce failed: Not in a room (socket: ${socket.id})`);
-            return callback && callback({ success: false, error: "Not in a room" });
-          }
+    // Store owner socketId on every producer so we can filter it out for the owner
+    socket.on("produce", async ({ kind, rtpParameters, transportId, appData }: any, callback: (res: any) => void) => {
+      try {
+        const roomId = getRoomBySocketId(socket.id)?.roomId || currentRoomId;
+        if (!roomId) return callback && callback({ success: false, error: "No room" });
 
-          const transport = getTransport(roomId, socket.id, "send");
-          if (!transport) {
-            logger.error(`produce failed: Send transport not found (socket: ${socket.id})`);
-            return callback && callback({ success: false, error: "Send transport not found for produce" });
-          }
+        const room = getRoom(roomId);
+        const participant = room?.participants.get(socket.id) || getParticipantBySocketId(socket.id);
+        const transport = (transportId ? getTransportById(roomId, transportId) : undefined) || getTransport(roomId, socket.id, "send");
+        if (!transport) {
+          return callback && callback({ success: false, error: "Send transport not found" });
+        }
 
-          const room = getRoom(roomId);
-          const participant = room?.participants.get(socket.id) || getParticipantBySocketId(socket.id);
-
-          const producer = await createProducer(transport, {
-            kind,
-            rtpParameters,
-            appData: {
-              socketId: socket.id,
-              userId: participant?.userId || socket.id,
-              kind,
-              ...(appData || {}),
-            },
-          });
-
-          setProducer(roomId, socket.id, kind, producer);
-
-          socket.to(roomId).emit("new-producer", {
+        const producer = await transport.produce({
+          kind,
+          rtpParameters,
+          appData: {
             socketId: socket.id,
             userId: participant?.userId || socket.id,
-            displayName: participant?.displayName || "Participant",
-            avatar: participant?.avatar,
-            role: participant?.role,
-            producerId: producer.id,
             kind,
+            ...(appData || {}),
+          },
+        });
+
+        addProducer(roomId, producer, socket.id);
+        console.log("[produce]", { socketId: socket.id, kind, producerId: producer.id });
+
+        if (typeof callback === "function") {
+          callback({ success: true, id: producer.id, producerId: producer.id });
+        }
+
+        // Notify everyone else in the room, not the sender
+        socket.to(roomId).emit("newProducer", {
+          producerId: producer.id,
+          kind: producer.kind,
+          socketId: socket.id,
+        });
+
+        socket.to(roomId).emit("new-producer", {
+          producerId: producer.id,
+          kind: producer.kind,
+          socketId: socket.id,
+        });
+      } catch (err: any) {
+        logger.error("produce handler failed:", err);
+        if (typeof callback === "function") {
+          callback({ success: false, error: err.message || "Failed to produce" });
+        }
+      }
+    });
+
+    // Return ALL existing producers except the requester's own
+    socket.on("get-producers", (payload: any, callback: (res: any) => void) => {
+      const roomId = (payload && typeof payload === "object" ? payload.roomId : undefined) || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId) {
+        if (typeof callback === "function") callback({ success: false, error: "No room", producers: [] });
+        return;
+      }
+
+      const producers = getProducersInRoom(roomId).filter(
+        (p) => (p.appData as any)?.socketId !== socket.id
+      );
+
+      console.log("[get-producers]", {
+        requester: socket.id,
+        count: producers.length,
+      });
+
+      if (typeof callback === "function") {
+        callback({
+          success: true,
+          producers: producers.map((p) => ({
+            producerId: p.id,
+            kind: p.kind,
+            socketId: (p.appData as any)?.socketId,
+          })),
+        });
+      }
+    });
+
+    socket.on("consume", async ({ transportId, producerId, rtpCapabilities }: any, callback: (res: any) => void) => {
+      try {
+        const roomId = getRoomBySocketId(socket.id)?.roomId || currentRoomId;
+        if (!roomId) return callback && callback({ success: false, error: "No room" });
+
+        const room = getRoom(roomId);
+        const router = room?.router || getRouter(roomId);
+        if (!router) return callback && callback({ success: false, error: "Router not found" });
+
+        if (!router.canConsume({ producerId, rtpCapabilities })) {
+          return callback && callback({ success: false, error: "Cannot consume" });
+        }
+
+        const transport = (transportId ? getTransportById(roomId, transportId) : undefined) || getTransport(roomId, socket.id, "recv");
+        if (!transport) {
+          return callback && callback({ success: false, error: "Recv transport not found" });
+        }
+
+        const producer = findProducer(roomId, producerId);
+        if (!producer) {
+          return callback && callback({ success: false, error: "Producer not found" });
+        }
+
+        const consumer = await transport.consume({
+          producerId,
+          rtpCapabilities,
+          paused: true, // always start paused, resume explicitly after frontend is ready
+        });
+
+        consumer.on("transportclose", () => {
+          consumer.close();
+        });
+
+        consumer.on("producerclose", () => {
+          consumer.close();
+        });
+
+        addConsumer(roomId, socket.id, consumer);
+        console.log("[consume-created]", { socketId: socket.id, producerId, consumerId: consumer.id });
+
+        if (typeof callback === "function") {
+          callback({
+            success: true,
+            params: {
+              id: consumer.id,
+              producerId,
+              kind: consumer.kind,
+              rtpParameters: consumer.rtpParameters,
+            },
           });
-
-          if (typeof callback === "function") {
-            callback({ success: true, id: producer.id, producerId: producer.id });
-          }
-        } catch (err: any) {
-          logger.error("produce handler failed:", err);
-          if (typeof callback === "function") {
-            callback({ success: false, error: err.message || "Failed to produce" });
-          }
+        }
+      } catch (err: any) {
+        logger.error("consume failed:", err);
+        if (typeof callback === "function") {
+          callback({ success: false, error: err.message || "Failed to consume" });
         }
       }
-    );
+    });
 
-    socket.on(
-      "consume",
-      async (
-        { producerId, rtpCapabilities }: { producerId: string; rtpCapabilities: any; transportId?: string },
-        callback: (res: any) => void
-      ) => {
-        try {
-          const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
-          if (!roomId) {
-            logger.error(`consume failed: Not in a room (socket: ${socket.id})`);
-            return callback && callback({ success: false, error: "Not in a room" });
-          }
-
-          const room = getRoom(roomId);
-          const transport = getTransport(roomId, socket.id, "recv");
-          if (!room || !transport) {
-            logger.error(`consume failed: Room or recv transport not found (socket: ${socket.id})`);
-            return callback && callback({ success: false, error: "Room or recv transport not found" });
-          }
-
-          const producer = findProducer(roomId, producerId);
-          if (!producer) {
-            logger.error(`consume failed: Producer ${producerId} not found in room ${roomId} (socket: ${socket.id})`);
-            return callback && callback({ success: false, error: "Producer not found" });
-          }
-
-          const consumer = await createConsumer(transport, producer, room.router, rtpCapabilities);
-          if (!consumer) {
-            logger.error(`consume failed: Cannot consume producer ${producerId} (socket: ${socket.id})`);
-            return callback && callback({ success: false, error: "Router cannot consume this producer" });
-          }
-
-          addConsumer(roomId, socket.id, consumer);
-
-          const params = {
-            id: consumer.id,
-            producerId,
-            kind: consumer.kind,
-            rtpParameters: consumer.rtpParameters,
-          };
-
-          if (typeof callback === "function") {
-            callback({
-              success: true,
-              params,
-            });
-          }
-        } catch (err: any) {
-          logger.error("consume handler failed:", err);
-          if (typeof callback === "function") {
-            callback({ success: false, error: err.message || "Failed to consume" });
-          }
-        }
-      }
-    );
-
-        socket.on("set-consumer-layers", async ({ consumerId, spatialLayer, temporalLayer }: { consumerId: string; spatialLayer: number; temporalLayer?: number }, callback?: (res: any) => void) => {
+    socket.on("set-consumer-layers", async ({ consumerId, spatialLayer, temporalLayer }: { consumerId: string; spatialLayer: number; temporalLayer?: number }, callback?: (res: any) => void) => {
       try {
         const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
         if (!roomId) return callback && callback({ success: false, error: "Not in a room" });
@@ -348,29 +391,17 @@ export function registerSignallingHandlers(io: Server) {
       }
     });
 
-    socket.on("resume-consumer", async ({ consumerId }: { consumerId: string }, callback: (res: any) => void) => {
+    socket.on("resume-consumer", async ({ consumerId }: { consumerId: string }, callback?: (res: any) => void) => {
       try {
-        const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
-        if (!roomId) return callback && callback({ success: false, error: "Not in a room" });
-
-        const room = getRoom(roomId);
-        const participant = room?.participants.get(socket.id);
-        const consumer = participant?.consumers?.[consumerId];
-        if (!consumer) {
-          logger.error(`resume-consumer failed: Consumer ${consumerId} not found (socket: ${socket.id})`);
-          return callback && callback({ success: false, error: "Consumer not found" });
-        }
+        const consumer = findConsumer(socket.id, consumerId);
+        if (!consumer) return callback?.({ success: false, error: "Consumer not found" });
 
         await consumer.resume();
-
-        if (typeof callback === "function") {
-          callback({ success: true });
-        }
+        console.log("[consumer-resumed]", { socketId: socket.id, consumerId });
+        callback?.({ success: true });
       } catch (err: any) {
         logger.error("resume-consumer failed:", err);
-        if (typeof callback === "function") {
-          callback({ success: false, error: err.message || "Failed to resume consumer" });
-        }
+        callback?.({ success: false, error: err.message });
       }
     });
 
@@ -381,7 +412,6 @@ export function registerSignallingHandlers(io: Server) {
 
         const producer = findProducer(roomId, producerId);
         if (!producer) {
-          logger.warn(`pause-producer: Producer ${producerId} not found`);
           return callback && callback({ success: false, error: "Producer not found" });
         }
 
@@ -401,7 +431,6 @@ export function registerSignallingHandlers(io: Server) {
 
         const producer = findProducer(roomId, producerId);
         if (!producer) {
-          logger.warn(`resume-producer: Producer ${producerId} not found`);
           return callback && callback({ success: false, error: "Producer not found" });
         }
 
@@ -411,22 +440,6 @@ export function registerSignallingHandlers(io: Server) {
       } catch (err: any) {
         logger.error("resume-producer failed:", err);
         if (typeof callback === "function") callback({ success: false, error: err.message });
-      }
-    });
-
-    socket.on("get-producers", (_payload: unknown, callback: (res: any) => void) => {
-      const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
-
-      if (!roomId) {
-        if (typeof callback === "function") {
-          callback({ success: false, error: "Not in a room", producers: [] });
-        }
-        return;
-      }
-      const producers = getAllProducersExcept(roomId, socket.id);
-
-      if (typeof callback === "function") {
-        callback({ success: true, producers });
       }
     });
 
@@ -443,6 +456,7 @@ export function registerSignallingHandlers(io: Server) {
         socket.leave(roomId);
         currentRoomId = null;
       }
+      removeAllProducersAndConsumersFor(socket.id);
       if (typeof callback === "function") {
         callback({ success: true });
       }
@@ -452,9 +466,10 @@ export function registerSignallingHandlers(io: Server) {
       handleLeaveRoom(callback);
     });
 
+    // Cleanup on disconnect - required so ghost producers don't get "consumed" later
     socket.on("disconnect", () => {
       handleLeaveRoom();
-      logger.info(`Socket disconnected: ${socket.id}`);
     });
   });
 }
+
