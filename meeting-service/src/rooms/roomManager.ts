@@ -101,13 +101,34 @@ export function getTransport(
 export function setProducer(
   roomId: string,
   socketId: string,
-  kind: string,
   producer: Producer
 ): void {
   const participant = rooms.get(roomId)?.participants.get(socketId);
   if (!participant) return;
   if (!participant.producers) participant.producers = {};
-  participant.producers[kind] = producer;
+  participant.producers[producer.id] = producer;
+}
+
+export function removeProducer(
+  roomId: string,
+  socketId: string,
+  producerId: string
+): Producer | null {
+  const participant = rooms.get(roomId)?.participants.get(socketId);
+  if (!participant || !participant.producers) return null;
+  const producer = participant.producers[producerId];
+  if (producer) {
+    try {
+      if (!producer.closed) {
+        producer.close();
+      }
+    } catch {
+      // Ignore
+    }
+    delete participant.producers[producerId];
+    return producer;
+  }
+  return null;
 }
 
 export function getAllProducersExcept(
@@ -121,6 +142,7 @@ export function getAllProducersExcept(
   displayName: string;
   avatar?: string;
   role?: string;
+  appData?: any;
 }> {
   const room = rooms.get(roomId);
   if (!room) return [];
@@ -133,19 +155,21 @@ export function getAllProducersExcept(
     displayName: string;
     avatar?: string;
     role?: string;
+    appData?: any;
   }> = [];
   for (const [socketId, participant] of room.participants.entries()) {
     if (socketId === excludeSocketId) continue;
-    for (const [kind, producer] of Object.entries(participant.producers || {})) {
-      if (producer) {
+    for (const producer of Object.values(participant.producers || {})) {
+      if (producer && !producer.closed) {
         result.push({
           socketId,
           userId: participant.userId,
-          kind,
+          kind: producer.kind,
           producerId: producer.id,
           displayName: participant.displayName,
           avatar: participant.avatar,
           role: participant.role,
+          appData: producer.appData,
         });
       }
     }
@@ -158,7 +182,7 @@ export function findProducer(roomId: string, producerId: string): Producer | nul
   if (!room) return null;
   for (const participant of room.participants.values()) {
     for (const producer of Object.values(participant.producers || {})) {
-      if (producer && producer.id === producerId) return producer;
+      if (producer && producer.id === producerId && !producer.closed) return producer;
     }
   }
   return null;
@@ -179,7 +203,7 @@ export function getProducersInRoom(roomId: string): Producer[] {
 }
 
 export function addProducer(roomId: string, producer: Producer, socketId: string): void {
-  setProducer(roomId, socketId, producer.kind, producer);
+  setProducer(roomId, socketId, producer);
 }
 
 export function getTransportById(roomId: string, transportId: string): WebRtcTransport | undefined {
@@ -245,4 +269,60 @@ export function removeAllProducersAndConsumersFor(socketId: string): void {
 
 export function getParticipantCount(roomId: string): number {
   return rooms.get(roomId)?.participants.size || 0;
+}
+
+// ================= PHASE 3 HELPERS (Room Lock, Roles, Moderation) =================
+
+const lockedRooms: Set<string> = new Set();
+
+export function setRoomLocked(roomId: string, locked: boolean): void {
+  if (locked) lockedRooms.add(roomId);
+  else lockedRooms.delete(roomId);
+}
+
+export function isRoomLocked(roomId: string): boolean {
+  return lockedRooms.has(roomId);
+}
+
+export function assignRoleOnJoin(roomId: string, socketId: string): "host" | "participant" {
+  const room = getRoom(roomId);
+  if (!room) return "host";
+  return room.participants.size <= 1 ? "host" : "participant";
+}
+
+export function getParticipant(roomId: string, socketId: string): Participant | undefined {
+  const room = getRoom(roomId);
+  return room?.participants.get(socketId);
+}
+
+export function setHandRaised(roomId: string, socketId: string, raised: boolean): void {
+  const p = getParticipant(roomId, socketId);
+  if (p) p.handRaised = raised;
+}
+
+export function setRole(roomId: string, socketId: string, role: "host" | "co-host" | "participant"): void {
+  const p = getParticipant(roomId, socketId);
+  if (p) p.role = role;
+}
+
+export function setParticipantApproved(roomId: string, socketId: string, approved: boolean): void {
+  const p = getParticipant(roomId, socketId);
+  if (p) p.approved = approved;
+}
+
+export function listParticipants(roomId: string): Array<any> {
+  const room = getRoom(roomId);
+  if (!room) return [];
+  return Array.from(room.participants.values()).map((p: Participant) => ({
+    socketId: p.socketId,
+    userId: p.userId,
+    name: p.displayName || "Guest",
+    displayName: p.displayName || "Guest",
+    avatar: p.avatar,
+    role: p.role || "participant",
+    handRaised: !!p.handRaised,
+    isVideoOff: !!p.isVideoOff,
+    isAudioOff: !!p.isAudioOff,
+    approved: p.approved !== false,
+  }));
 }
