@@ -23,4 +23,6 @@ export interface Room {
   router: Router;
   participants: Map<string, Participant>;
   createdAt: number;
+  allMuted: boolean;
+  allVideoHidden: boolean;
 }

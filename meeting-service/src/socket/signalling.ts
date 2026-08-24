@@ -31,6 +31,10 @@ import {
   setRole,
   setParticipantApproved,
   listParticipants,
+  setRoomAllMuted,
+  getRoomAllMuted,
+  setRoomAllVideoHidden,
+  getRoomAllVideoHidden,
 } from "../rooms/roomManager";
 import { logger } from "../utils/logger";
 import { config } from "../config";
@@ -60,11 +64,11 @@ export function registerSignallingHandlers(io: Server) {
     socket.on(
       "join-room",
       async (
-        payload: { roomId: string; displayName?: string; userId?: string; avatar?: string; role?: string },
+        payload: { roomId: string; displayName?: string; userId?: string; avatar?: string; role?: string; isHost?: boolean },
         callback: (res: any) => void
       ) => {
         try {
-          const { roomId, displayName, userId, avatar, role } = payload || {};
+          const { roomId, displayName, userId, avatar, role, isHost } = payload || {};
 
           if (!roomId) {
             if (typeof callback === "function") {
@@ -80,9 +84,25 @@ export function registerSignallingHandlers(io: Server) {
           socket.data.roomId = roomId;
 
           const defaultRole = assignRoleOnJoin(roomId, socket.id);
-          const finalRole = role && defaultRole !== "host" ? role : defaultRole;
+          let finalRole: string;
+          if (isHost === true) {
+            finalRole = "host";
+          } else if (defaultRole === "host") {
+            // assignRoleOnJoin returned host (room was empty) — valid fallback for first person
+            finalRole = "host";
+          } else if (role === "co-host") {
+            finalRole = "co-host";
+          } else {
+            finalRole = "participant";
+          }
+
           const locked = isRoomLocked(roomId);
-          const isApproved = !locked || finalRole === "host";
+          // Hosts and co-hosts are always approved; others need host to admit them if room is locked
+          const isApproved = finalRole === "host" || finalRole === "co-host" || !locked;
+
+          // Fetch room-level media state so late joiners sync immediately
+          const roomAllMuted = getRoomAllMuted(roomId);
+          const roomAllVideoHidden = getRoomAllVideoHidden(roomId);
 
           const participant = addParticipant(roomId, socket.id, {
             displayName: displayName || "Participant",
@@ -116,6 +136,8 @@ export function registerSignallingHandlers(io: Server) {
               role: finalRole,
               locked,
               approved: isApproved,
+              allMuted: roomAllMuted,
+              allVideoHidden: roomAllVideoHidden,
             });
           }
         } catch (err: any) {
@@ -588,7 +610,45 @@ export function registerSignallingHandlers(io: Server) {
         if (typeof ack === "function") ack({ success: false, error: "not-host" });
         return;
       }
-      socket.to(roomId).emit("force-mute", { type: "audio" });
+      setRoomAllMuted(roomId, true);
+      socket.to(roomId).emit("force-mute", { type: "audio", muted: true });
+      if (typeof ack === "function") ack({ success: true });
+    });
+
+    // ---------- PHASE 3: UNMUTE ALL ----------
+    socket.on("unmute-all", (payload: any, ack?: (res: any) => void) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId || !isPrivileged(roomId)) {
+        if (typeof ack === "function") ack({ success: false, error: "not-host" });
+        return;
+      }
+      setRoomAllMuted(roomId, false);
+      // Emit force-mute with muted:false so all clients know they can unmute
+      socket.to(roomId).emit("force-mute", { type: "audio", muted: false });
+      if (typeof ack === "function") ack({ success: true });
+    });
+
+    // ---------- PHASE 3: HIDE ALL VIDEOS ----------
+    socket.on("hide-all-videos", (payload: any, ack?: (res: any) => void) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId || !isPrivileged(roomId)) {
+        if (typeof ack === "function") ack({ success: false, error: "not-host" });
+        return;
+      }
+      setRoomAllVideoHidden(roomId, true);
+      socket.to(roomId).emit("force-video", { hidden: true });
+      if (typeof ack === "function") ack({ success: true });
+    });
+
+    // ---------- PHASE 3: UNHIDE ALL VIDEOS ----------
+    socket.on("unhide-all-videos", (payload: any, ack?: (res: any) => void) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId || !isPrivileged(roomId)) {
+        if (typeof ack === "function") ack({ success: false, error: "not-host" });
+        return;
+      }
+      setRoomAllVideoHidden(roomId, false);
+      socket.to(roomId).emit("force-video", { hidden: false });
       if (typeof ack === "function") ack({ success: true });
     });
 
@@ -676,6 +736,8 @@ export function registerSignallingHandlers(io: Server) {
           success: true,
           participants: listParticipants(roomId),
           locked: isRoomLocked(roomId),
+          allMuted: getRoomAllMuted(roomId),
+          allVideoHidden: getRoomAllVideoHidden(roomId),
         });
       }
     });

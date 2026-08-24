@@ -17,6 +17,8 @@ export async function getOrCreateRoom(roomId: string): Promise<Room> {
     router,
     participants: new Map(),
     createdAt: Date.now(),
+    allMuted: false,
+    allVideoHidden: false,
   };
 
   rooms.set(roomId, room);
@@ -286,8 +288,10 @@ export function isRoomLocked(roomId: string): boolean {
 
 export function assignRoleOnJoin(roomId: string, socketId: string): "host" | "participant" {
   const room = getRoom(roomId);
-  if (!room) return "host";
-  return room.participants.size <= 1 ? "host" : "participant";
+  // Only the very first person in a fresh/empty room gets "host" as a fallback.
+  // size === 0 means no one is in the room yet (checked BEFORE the new participant is added).
+  if (!room || room.participants.size === 0) return "host";
+  return "participant";
 }
 
 export function getParticipant(roomId: string, socketId: string): Participant | undefined {
@@ -325,4 +329,24 @@ export function listParticipants(roomId: string): Array<any> {
     isAudioOff: !!p.isAudioOff,
     approved: p.approved !== false,
   }));
+}
+
+// ================= Room-level media state (mute/video) =================
+
+export function setRoomAllMuted(roomId: string, muted: boolean): void {
+  const room = rooms.get(roomId);
+  if (room) room.allMuted = muted;
+}
+
+export function getRoomAllMuted(roomId: string): boolean {
+  return rooms.get(roomId)?.allMuted ?? false;
+}
+
+export function setRoomAllVideoHidden(roomId: string, hidden: boolean): void {
+  const room = rooms.get(roomId);
+  if (room) room.allVideoHidden = hidden;
+}
+
+export function getRoomAllVideoHidden(roomId: string): boolean {
+  return rooms.get(roomId)?.allVideoHidden ?? false;
 }
