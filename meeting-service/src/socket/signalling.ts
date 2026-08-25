@@ -1,3 +1,7 @@
+import { registerHostControlEvents } from "../host-controls/registerHostControlEvents";
+import { createRoomAdapter } from "../host-controls/createRoomAdapter";
+import { getRoomControlState } from "../host-controls/hostControl.state";
+import * as roomManager from "../rooms/roomManager";
 import { Server, Socket } from "socket.io";
 import { createWebRtcTransport } from "../mediasoup/transport";
 import { createProducer } from "../mediasoup/producer";
@@ -25,22 +29,28 @@ import {
   getRouter,
   setRoomLocked,
   isRoomLocked,
-  assignRoleOnJoin,
   getParticipant,
   setHandRaised,
   setRole,
   setParticipantApproved,
   listParticipants,
+  setParticipantMutedByHost,
+  setParticipantVideoHiddenByHost,
   setRoomAllMuted,
   getRoomAllMuted,
   setRoomAllVideoHidden,
   getRoomAllVideoHidden,
+  setRoomHostUserId,
+  getRoomHostUserId,
 } from "../rooms/roomManager";
 import { logger } from "../utils/logger";
 import { config } from "../config";
 
+const roomAdapter = createRoomAdapter(roomManager);
+
 export function registerSignallingHandlers(io: Server) {
   io.on("connection", (socket: Socket) => {
+    const hostControlService = registerHostControlEvents({ io, socket, roomAdapter });
     socket.emit("server-version", {
       version: "UPDATED ONE",
       timestamp: Date.now(),
@@ -68,7 +78,7 @@ export function registerSignallingHandlers(io: Server) {
         callback: (res: any) => void
       ) => {
         try {
-          const { roomId, displayName, userId, avatar, role, isHost } = payload || {};
+          const { roomId, displayName, userId, avatar, role } = payload || {};
 
           if (!roomId) {
             if (typeof callback === "function") {
@@ -77,21 +87,42 @@ export function registerSignallingHandlers(io: Server) {
             return;
           }
 
+          // NOTE: We intentionally ignore `isHost` sent by the client — it is
+          // untrusted and was the root cause of every user appearing as host.
+          // Role is determined server-side by comparing userId against the
+          // room's stored hostUserId.
+
           const room = await getOrCreateRoom(roomId);
 
           socket.join(roomId);
           currentRoomId = roomId;
           socket.data.roomId = roomId;
 
-          const defaultRole = assignRoleOnJoin(roomId, socket.id);
+          const joiningUserId = String(userId || socket.id);
+
+          // ── Host identity: set once on room creation, never overwritten ─────────
+          // If the room has no hostUserId yet (fresh room), the very first joiner
+          // becomes the host. This is safe because createCollabMeeting on the
+          // frontend sets hostUserId in the DB BEFORE navigating to the room, so
+          // the actual meeting creator always joins first.
+          if (!getRoomHostUserId(roomId)) {
+            setRoomHostUserId(roomId, joiningUserId);
+          }
+
+          const roomHostUserId = getRoomHostUserId(roomId);
+
+          // ── Authoritative role resolution ────────────────────────────────────
+          // host   → userId matches the room's stored hostUserId
+          // co-host → server/host explicitly granted co-host (via set-role event)
+          //           The client can suggest co-host only if the server confirms it
+          // participant → everyone else
           let finalRole: string;
-          if (isHost === true) {
-            finalRole = "host";
-          } else if (defaultRole === "host") {
-            // assignRoleOnJoin returned host (room was empty) — valid fallback for first person
+          if (roomHostUserId && joiningUserId === roomHostUserId) {
             finalRole = "host";
           } else if (role === "co-host") {
-            finalRole = "co-host";
+            // Only honour co-host if the room actually has a host set, preventing
+            // a non-host from self-elevating on a brand-new room.
+            finalRole = roomHostUserId ? "co-host" : "participant";
           } else {
             finalRole = "participant";
           }
@@ -106,7 +137,7 @@ export function registerSignallingHandlers(io: Server) {
 
           const participant = addParticipant(roomId, socket.id, {
             displayName: displayName || "Participant",
-            userId: userId || socket.id,
+            userId: joiningUserId,
             avatar,
             role: finalRole,
           });
@@ -126,6 +157,7 @@ export function registerSignallingHandlers(io: Server) {
           });
 
           broadcastParticipants(roomId);
+          hostControlService.recordLifecycle(roomId, "PARTICIPANT_JOINED", participant, { approved: isApproved });
 
           if (typeof callback === "function") {
             callback({
@@ -302,6 +334,23 @@ export function registerSignallingHandlers(io: Server) {
         const transport = (transportId ? getTransportById(roomId, transportId) : undefined) || getTransport(roomId, socket.id, "send");
         if (!transport) {
           return callback && callback({ success: false, error: "Send transport not found" });
+        }
+
+        const controlState = getRoomControlState(roomId);
+        const source = appData && appData.source;
+        const privileged = participant && (participant.role === "host" || participant.role === "cohost" || participant.role === "co-host");
+
+        if (!participant || participant.approved === false) {
+          return callback && callback({ success: false, error: "Participant is not admitted" });
+        }
+        if (source === "screen" && !privileged && !controlState.policy.participantScreenShareAllowed) {
+          return callback && callback({ success: false, error: "SCREEN_SHARE_DISABLED" });
+        }
+        if (kind === "audio" && !privileged && (participant.mutedByHost || !controlState.policy.participantsCanUnmute || getRoomAllMuted(roomId))) {
+          return callback && callback({ success: false, error: "PARTICIPANT_UNMUTE_DISABLED" });
+        }
+        if (kind === "video" && source !== "screen" && !privileged && (participant.videoHiddenByHost || !controlState.policy.participantsCanEnableVideo || getRoomAllVideoHidden(roomId))) {
+          return callback && callback({ success: false, error: "PARTICIPANT_VIDEO_DISABLED" });
         }
 
         const producer = await transport.produce({
@@ -516,6 +565,16 @@ export function registerSignallingHandlers(io: Server) {
           return callback && callback({ success: false, error: "Producer not found" });
         }
 
+        const participant = getParticipant(roomId, socket.id);
+        const privileged = participant && (participant.role === "host" || participant.role === "cohost" || participant.role === "co-host");
+        const controlState = getRoomControlState(roomId);
+        if (producer.kind === "audio" && !privileged && (participant?.mutedByHost || !controlState.policy.participantsCanUnmute || getRoomAllMuted(roomId))) {
+          return callback && callback({ success: false, error: "PARTICIPANT_UNMUTE_DISABLED" });
+        }
+        if (producer.kind === "video" && producer.appData?.source !== "screen" && !privileged && (participant?.videoHiddenByHost || !controlState.policy.participantsCanEnableVideo || getRoomAllVideoHidden(roomId))) {
+          return callback && callback({ success: false, error: "PARTICIPANT_VIDEO_DISABLED" });
+        }
+
         await producer.resume();
         socket.to(roomId).emit("producer-resumed", { producerId, socketId: socket.id, appData: producer.appData });
         if (typeof callback === "function") callback({ success: true });
@@ -589,7 +648,7 @@ export function registerSignallingHandlers(io: Server) {
       if (typeof ack === "function") ack({ success: true, locked });
     });
 
-    // ---------- PHASE 3: MUTE A PARTICIPANT ----------
+    // ---------- PHASE 3: MUTE A PARTICIPANT (INDIVIDUAL) ----------
     socket.on("mute-participant", (payload: any, ack?: (res: any) => void) => {
       const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
       if (!roomId || !isPrivileged(roomId)) {
@@ -598,7 +657,57 @@ export function registerSignallingHandlers(io: Server) {
       }
       const targetSocketId = payload?.targetSocketId;
       if (targetSocketId) {
-        io.to(targetSocketId).emit("force-mute", { type: payload?.type || "audio" });
+        setParticipantMutedByHost(roomId, targetSocketId, true);
+        io.to(targetSocketId).emit("force-mute", { type: "audio", muted: true, individual: true });
+        broadcastParticipants(roomId);
+      }
+      if (typeof ack === "function") ack({ success: true });
+    });
+
+    // ---------- PHASE 3: UNMUTE A PARTICIPANT (INDIVIDUAL) ----------
+    socket.on("unmute-participant", (payload: any, ack?: (res: any) => void) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId || !isPrivileged(roomId)) {
+        if (typeof ack === "function") ack({ success: false, error: "not-host" });
+        return;
+      }
+      const targetSocketId = payload?.targetSocketId;
+      if (targetSocketId) {
+        setParticipantMutedByHost(roomId, targetSocketId, false);
+        io.to(targetSocketId).emit("force-mute", { type: "audio", muted: false, individual: true });
+        broadcastParticipants(roomId);
+      }
+      if (typeof ack === "function") ack({ success: true });
+    });
+
+    // ---------- PHASE 3: HIDE PARTICIPANT VIDEO (INDIVIDUAL) ----------
+    socket.on("hide-video-participant", (payload: any, ack?: (res: any) => void) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId || !isPrivileged(roomId)) {
+        if (typeof ack === "function") ack({ success: false, error: "not-host" });
+        return;
+      }
+      const targetSocketId = payload?.targetSocketId;
+      if (targetSocketId) {
+        setParticipantVideoHiddenByHost(roomId, targetSocketId, true);
+        io.to(targetSocketId).emit("force-video", { hidden: true, individual: true });
+        broadcastParticipants(roomId);
+      }
+      if (typeof ack === "function") ack({ success: true });
+    });
+
+    // ---------- PHASE 3: UNHIDE PARTICIPANT VIDEO (INDIVIDUAL) ----------
+    socket.on("unhide-video-participant", (payload: any, ack?: (res: any) => void) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId || !isPrivileged(roomId)) {
+        if (typeof ack === "function") ack({ success: false, error: "not-host" });
+        return;
+      }
+      const targetSocketId = payload?.targetSocketId;
+      if (targetSocketId) {
+        setParticipantVideoHiddenByHost(roomId, targetSocketId, false);
+        io.to(targetSocketId).emit("force-video", { hidden: false, individual: true });
+        broadcastParticipants(roomId);
       }
       if (typeof ack === "function") ack({ success: true });
     });
@@ -611,7 +720,8 @@ export function registerSignallingHandlers(io: Server) {
         return;
       }
       setRoomAllMuted(roomId, true);
-      socket.to(roomId).emit("force-mute", { type: "audio", muted: true });
+      socket.to(roomId).emit("force-mute", { type: "audio", muted: true, individual: false });
+      broadcastParticipants(roomId);
       if (typeof ack === "function") ack({ success: true });
     });
 
@@ -624,7 +734,8 @@ export function registerSignallingHandlers(io: Server) {
       }
       setRoomAllMuted(roomId, false);
       // Emit force-mute with muted:false so all clients know they can unmute
-      socket.to(roomId).emit("force-mute", { type: "audio", muted: false });
+      socket.to(roomId).emit("force-mute", { type: "audio", muted: false, individual: false });
+      broadcastParticipants(roomId);
       if (typeof ack === "function") ack({ success: true });
     });
 
@@ -636,7 +747,8 @@ export function registerSignallingHandlers(io: Server) {
         return;
       }
       setRoomAllVideoHidden(roomId, true);
-      socket.to(roomId).emit("force-video", { hidden: true });
+      socket.to(roomId).emit("force-video", { hidden: true, individual: false });
+      broadcastParticipants(roomId);
       if (typeof ack === "function") ack({ success: true });
     });
 
@@ -648,7 +760,8 @@ export function registerSignallingHandlers(io: Server) {
         return;
       }
       setRoomAllVideoHidden(roomId, false);
-      socket.to(roomId).emit("force-video", { hidden: false });
+      socket.to(roomId).emit("force-video", { hidden: false, individual: false });
+      broadcastParticipants(roomId);
       if (typeof ack === "function") ack({ success: true });
     });
 
@@ -698,7 +811,9 @@ export function registerSignallingHandlers(io: Server) {
       }
       const targetSocketId = payload?.targetSocketId;
       if (targetSocketId) {
+        const targetParticipant = getParticipant(roomId, targetSocketId);
         setParticipantApproved(roomId, targetSocketId, true);
+        hostControlService.recordLifecycle(roomId, "PARTICIPANT_ADMITTED", targetParticipant);
         io.to(targetSocketId).emit("admitted", { roomId });
       }
       broadcastParticipants(roomId);
@@ -713,6 +828,8 @@ export function registerSignallingHandlers(io: Server) {
       }
       const targetSocketId = payload?.targetSocketId;
       if (targetSocketId) {
+        const targetParticipant = getParticipant(roomId, targetSocketId);
+        hostControlService.recordLifecycle(roomId, "PARTICIPANT_REJECTED", targetParticipant);
         io.to(targetSocketId).emit("rejected", { roomId });
         const target = io.sockets.sockets.get(targetSocketId);
         if (target) {
@@ -750,6 +867,9 @@ export function registerSignallingHandlers(io: Server) {
         const participant = room?.participants.get(socket.id);
         const userId = participant?.userId || socket.id;
 
+        if (participant) {
+          hostControlService.recordLifecycle(roomId, "PARTICIPANT_LEFT", participant, { reason: "SOCKET_DISCONNECTED" });
+        }
         removeParticipant(roomId, socket.id);
         socket.to(roomId).emit("participant-left", { socketId: socket.id, userId });
         socket.leave(roomId);

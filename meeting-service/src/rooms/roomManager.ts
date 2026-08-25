@@ -286,11 +286,31 @@ export function isRoomLocked(roomId: string): boolean {
   return lockedRooms.has(roomId);
 }
 
-export function assignRoleOnJoin(roomId: string, socketId: string): "host" | "participant" {
-  const room = getRoom(roomId);
-  // Only the very first person in a fresh/empty room gets "host" as a fallback.
-  // size === 0 means no one is in the room yet (checked BEFORE the new participant is added).
-  if (!room || room.participants.size === 0) return "host";
+/**
+ * Store the authoritative host userId for a room.
+ * Called once when the first participant joins (room creation).
+ * NEVER overwritten — host identity is immutable for the lifetime of the room.
+ */
+export function setRoomHostUserId(roomId: string, userId: string): void {
+  const room = rooms.get(roomId);
+  if (room && !room.hostUserId) {
+    room.hostUserId = String(userId);
+  }
+}
+
+/**
+ * Returns the stored host userId for the room, or undefined if not yet set.
+ */
+export function getRoomHostUserId(roomId: string): string | undefined {
+  return rooms.get(roomId)?.hostUserId;
+}
+
+/**
+ * Kept for backward compat — always returns 'participant' now.
+ * Role assignment is handled authoritatively in signalling.ts by comparing
+ * the joining userId against the room's stored hostUserId.
+ */
+export function assignRoleOnJoin(_roomId: string, _socketId: string): "participant" {
   return "participant";
 }
 
@@ -314,6 +334,22 @@ export function setParticipantApproved(roomId: string, socketId: string, approve
   if (p) p.approved = approved;
 }
 
+export function setParticipantMutedByHost(roomId: string, socketId: string, muted: boolean): void {
+  const p = getParticipant(roomId, socketId);
+  if (p) {
+    p.mutedByHost = muted;
+    if (muted) p.isAudioOff = true;
+  }
+}
+
+export function setParticipantVideoHiddenByHost(roomId: string, socketId: string, hidden: boolean): void {
+  const p = getParticipant(roomId, socketId);
+  if (p) {
+    p.videoHiddenByHost = hidden;
+    if (hidden) p.isVideoOff = true;
+  }
+}
+
 export function listParticipants(roomId: string): Array<any> {
   const room = getRoom(roomId);
   if (!room) return [];
@@ -327,6 +363,8 @@ export function listParticipants(roomId: string): Array<any> {
     handRaised: !!p.handRaised,
     isVideoOff: !!p.isVideoOff,
     isAudioOff: !!p.isAudioOff,
+    mutedByHost: !!p.mutedByHost,
+    videoHiddenByHost: !!p.videoHiddenByHost,
     approved: p.approved !== false,
   }));
 }

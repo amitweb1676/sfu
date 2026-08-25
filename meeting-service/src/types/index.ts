@@ -12,6 +12,8 @@ export interface Participant {
   approved?: boolean;
   isVideoOff?: boolean;
   isAudioOff?: boolean;
+  mutedByHost?: boolean;
+  videoHiddenByHost?: boolean;
   joinedAt: number;
   transports?: { send?: WebRtcTransport; recv?: WebRtcTransport; [key: string]: WebRtcTransport | undefined };
   producers?: { [producerId: string]: Producer };
@@ -25,4 +27,7 @@ export interface Room {
   createdAt: number;
   allMuted: boolean;
   allVideoHidden: boolean;
+  /** The userId of whoever created/owns this room. Set on first join and never overwritten. */
+  hostUserId?: string;
 }
+
