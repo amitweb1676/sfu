@@ -42,6 +42,8 @@ import {
   getRoomAllVideoHidden,
   setRoomHostUserId,
   getRoomHostUserId,
+  addAdmittedUserId,
+  isUserAdmitted,
 } from "../rooms/roomManager";
 import { logger } from "../utils/logger";
 import { config } from "../config";
@@ -61,7 +63,8 @@ export function registerSignallingHandlers(io: Server) {
 
     const isPrivileged = (roomId: string): boolean => {
       const p = getParticipant(roomId, socket.id);
-      return p?.role === "host" || p?.role === "co-host";
+      const hostUid = getRoomHostUserId(roomId);
+      return p?.role === "host" || p?.role === "co-host" || (!!hostUid && p?.userId === hostUid);
     };
 
     const broadcastParticipants = (roomId: string) => {
@@ -78,7 +81,7 @@ export function registerSignallingHandlers(io: Server) {
         callback: (res: any) => void
       ) => {
         try {
-          const { roomId, displayName, userId, avatar, role } = payload || {};
+          const { roomId, displayName, userId, avatar, role, isHost } = payload || {};
 
           if (!roomId) {
             if (typeof callback === "function") {
@@ -86,11 +89,6 @@ export function registerSignallingHandlers(io: Server) {
             }
             return;
           }
-
-          // NOTE: We intentionally ignore `isHost` sent by the client — it is
-          // untrusted and was the root cause of every user appearing as host.
-          // Role is determined server-side by comparing userId against the
-          // room's stored hostUserId.
 
           const room = await getOrCreateRoom(roomId);
 
@@ -100,36 +98,41 @@ export function registerSignallingHandlers(io: Server) {
 
           const joiningUserId = String(userId || socket.id);
 
-          // ── Host identity: set once on room creation, never overwritten ─────────
-          // If the room has no hostUserId yet (fresh room), the very first joiner
-          // becomes the host. This is safe because createCollabMeeting on the
-          // frontend sets hostUserId in the DB BEFORE navigating to the room, so
-          // the actual meeting creator always joins first.
-          if (!getRoomHostUserId(roomId)) {
-            setRoomHostUserId(roomId, joiningUserId);
+          // ── Host identity resolution ─────────────────────────────────────────
+          // If the client is the verified meeting host/creator, bind host identity.
+          if (isHost === true) {
+            setRoomHostUserId(roomId, joiningUserId, true);
+          } else if (!getRoomHostUserId(roomId)) {
+            // Only claim initial host if no host was ever set
+            setRoomHostUserId(roomId, joiningUserId, false);
           }
 
           const roomHostUserId = getRoomHostUserId(roomId);
 
           // ── Authoritative role resolution ────────────────────────────────────
-          // host   → userId matches the room's stored hostUserId
-          // co-host → server/host explicitly granted co-host (via set-role event)
-          //           The client can suggest co-host only if the server confirms it
+          // host   → isHost flag is true OR userId matches room's stored hostUserId
+          // co-host → explicit co-host role
           // participant → everyone else
           let finalRole: string;
-          if (roomHostUserId && joiningUserId === roomHostUserId) {
+          if (isHost === true || (roomHostUserId && joiningUserId === roomHostUserId)) {
             finalRole = "host";
           } else if (role === "co-host") {
-            // Only honour co-host if the room actually has a host set, preventing
-            // a non-host from self-elevating on a brand-new room.
-            finalRole = roomHostUserId ? "co-host" : "participant";
+            finalRole = "co-host";
           } else {
             finalRole = "participant";
           }
 
           const locked = isRoomLocked(roomId);
-          // Hosts and co-hosts are always approved; others need host to admit them if room is locked
-          const isApproved = finalRole === "host" || finalRole === "co-host" || !locked;
+          // Hosts and co-hosts are always approved.
+          // Participants are approved if:
+          // 1. Room is not locked, OR
+          // 2. The user was previously admitted into this room session.
+          const previouslyAdmitted = isUserAdmitted(roomId, joiningUserId);
+          const isApproved = finalRole === "host" || finalRole === "co-host" || !locked || previouslyAdmitted;
+
+          if (isApproved) {
+            addAdmittedUserId(roomId, joiningUserId);
+          }
 
           // Fetch room-level media state so late joiners sync immediately
           const roomAllMuted = getRoomAllMuted(roomId);
@@ -812,6 +815,9 @@ export function registerSignallingHandlers(io: Server) {
       const targetSocketId = payload?.targetSocketId;
       if (targetSocketId) {
         const targetParticipant = getParticipant(roomId, targetSocketId);
+        if (targetParticipant?.userId) {
+          addAdmittedUserId(roomId, targetParticipant.userId);
+        }
         setParticipantApproved(roomId, targetSocketId, true);
         hostControlService.recordLifecycle(roomId, "PARTICIPANT_ADMITTED", targetParticipant);
         io.to(targetSocketId).emit("admitted", { roomId });

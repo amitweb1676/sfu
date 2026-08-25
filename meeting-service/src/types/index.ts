@@ -27,7 +27,9 @@ export interface Room {
   createdAt: number;
   allMuted: boolean;
   allVideoHidden: boolean;
-  /** The userId of whoever created/owns this room. Set on first join and never overwritten. */
+  /** The userId of whoever created/owns this room. */
   hostUserId?: string;
+  /** Set of userIds that have been admitted into this room, persisted across socket reconnections */
+  admittedUserIds?: Set<string>;
 }
 

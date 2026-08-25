@@ -19,6 +19,7 @@ export async function getOrCreateRoom(roomId: string): Promise<Room> {
     createdAt: Date.now(),
     allMuted: false,
     allVideoHidden: false,
+    admittedUserIds: new Set(),
   };
 
   rooms.set(roomId, room);
@@ -288,13 +289,18 @@ export function isRoomLocked(roomId: string): boolean {
 
 /**
  * Store the authoritative host userId for a room.
- * Called once when the first participant joins (room creation).
- * NEVER overwritten — host identity is immutable for the lifetime of the room.
+ * Can be overridden if a verified host connects (e.g. from backend check or isHost flag).
  */
-export function setRoomHostUserId(roomId: string, userId: string): void {
+export function setRoomHostUserId(roomId: string, userId: string, force = false): void {
   const room = rooms.get(roomId);
-  if (room && !room.hostUserId) {
-    room.hostUserId = String(userId);
+  if (room) {
+    if (!room.hostUserId || force) {
+      room.hostUserId = String(userId);
+    }
+    if (!room.admittedUserIds) {
+      room.admittedUserIds = new Set();
+    }
+    room.admittedUserIds.add(String(userId));
   }
 }
 
@@ -303,6 +309,26 @@ export function setRoomHostUserId(roomId: string, userId: string): void {
  */
 export function getRoomHostUserId(roomId: string): string | undefined {
   return rooms.get(roomId)?.hostUserId;
+}
+
+/**
+ * Mark a user as permanently admitted for the duration of this room session
+ */
+export function addAdmittedUserId(roomId: string, userId: string): void {
+  const room = rooms.get(roomId);
+  if (room) {
+    if (!room.admittedUserIds) room.admittedUserIds = new Set();
+    room.admittedUserIds.add(String(userId));
+  }
+}
+
+/**
+ * Check if a userId is already admitted into this room session
+ */
+export function isUserAdmitted(roomId: string, userId: string): boolean {
+  const room = rooms.get(roomId);
+  if (!room || !room.admittedUserIds) return false;
+  return room.admittedUserIds.has(String(userId));
 }
 
 /**
