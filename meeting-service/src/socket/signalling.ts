@@ -47,6 +47,7 @@ import {
 } from "../rooms/roomManager";
 import { logger } from "../utils/logger";
 import { config } from "../config";
+import { mainBackendClient } from "../integrations/main-backend/mainBackendClient";
 
 const roomAdapter = createRoomAdapter(roomManager);
 
@@ -81,7 +82,7 @@ export function registerSignallingHandlers(io: Server) {
         callback: (res: any) => void
       ) => {
         try {
-          const { roomId, displayName, userId, avatar, role, isHost } = payload || {};
+          const { roomId, displayName, userId, avatar, role } = payload || {};
 
           if (!roomId) {
             if (typeof callback === "function") {
@@ -90,31 +91,34 @@ export function registerSignallingHandlers(io: Server) {
             return;
           }
 
-          const room = await getOrCreateRoom(roomId);
-
-          socket.join(roomId);
-          currentRoomId = roomId;
-          socket.data.roomId = roomId;
-
           const joiningUserId = String(userId || socket.id);
 
-          // ── Host identity resolution ─────────────────────────────────────────
-          // If the client is the verified meeting host/creator, bind host identity.
-          if (isHost === true) {
-            setRoomHostUserId(roomId, joiningUserId, true);
-          } else if (!getRoomHostUserId(roomId)) {
-            // Only claim initial host if no host was ever set
-            setRoomHostUserId(roomId, joiningUserId, false);
+          // ── 1. Authoritative Host verification with Main Backend ───────────
+          const hostVerification = await mainBackendClient.verifyHost({
+            roomId,
+            userId: joiningUserId,
+          });
+
+          if (hostVerification.exists === false) {
+            if (typeof callback === "function") {
+              callback({
+                success: false,
+                error: "Meeting record was not found",
+                code: "MEETING_NOT_FOUND",
+              });
+            }
+            return;
           }
 
-          const roomHostUserId = getRoomHostUserId(roomId);
+          const room = await getOrCreateRoom(roomId);
+          socket.join(roomId);
+          currentRoomId = roomId;
 
-          // ── Authoritative role resolution ────────────────────────────────────
-          // host   → isHost flag is true OR userId matches room's stored hostUserId
-          // co-host → explicit co-host role
-          // participant → everyone else
+          // ── 2. Authoritative role resolution ────────────────────────────────
+          // Never promote first joiner to host. Only assign "host" if Main Backend verified it.
           let finalRole: string;
-          if (isHost === true || (roomHostUserId && joiningUserId === roomHostUserId)) {
+          if (hostVerification.isHost) {
+            setRoomHostUserId(roomId, joiningUserId, true);
             finalRole = "host";
           } else if (role === "co-host") {
             finalRole = "co-host";
@@ -122,11 +126,18 @@ export function registerSignallingHandlers(io: Server) {
             finalRole = "participant";
           }
 
+          socket.data.role = finalRole;
+          socket.data.userId = joiningUserId;
+          socket.data.roomId = roomId;
+
+          console.info("[SFU][JOIN_ROLE]", {
+            roomId,
+            joiningUserId,
+            role: finalRole,
+            socketId: socket.id,
+          });
+
           const locked = isRoomLocked(roomId);
-          // Hosts and co-hosts are always approved.
-          // Participants are approved if:
-          // 1. Room is not locked, OR
-          // 2. The user was previously admitted into this room session.
           const previouslyAdmitted = isUserAdmitted(roomId, joiningUserId);
           const isApproved = finalRole === "host" || finalRole === "co-host" || !locked || previouslyAdmitted;
 
@@ -134,7 +145,6 @@ export function registerSignallingHandlers(io: Server) {
             addAdmittedUserId(roomId, joiningUserId);
           }
 
-          // Fetch room-level media state so late joiners sync immediately
           const roomAllMuted = getRoomAllMuted(roomId);
           const roomAllVideoHidden = getRoomAllVideoHidden(roomId);
 

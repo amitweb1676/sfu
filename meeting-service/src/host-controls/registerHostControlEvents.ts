@@ -25,7 +25,10 @@ export function registerHostControlEvents({
         const roomId = requireString(payload?.roomId, "roomId", 120);
         const data = await handler(roomId, payload);
         safeAck(ack, { ok: true, data });
-      } catch (error) {
+      } catch (error: any) {
+        if (error?.name === "HostControlError" && error?.status === 429) {
+          console.warn(`[SFU][HOST_CONTROL][RATE_LIMIT] socket ${socket.id} exceeded host-control rate limit`);
+        }
         safeAck(ack, toAckError(error));
       }
     };
