@@ -639,7 +639,7 @@ export function registerSignallingHandlers(io: Server) {
           socket.emit("chat-message", message);
           const room = getRoom(roomId);
           if (room) {
-            for (const [sockId, peer] of room.peers.entries()) {
+            for (const [sockId, peer] of room.participants.entries()) {
               if (sockId === recipientId || peer.userId === recipientId) {
                 io.to(sockId).emit("chat-message", message);
               }
