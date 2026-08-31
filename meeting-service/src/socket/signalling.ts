@@ -608,9 +608,7 @@ export function registerSignallingHandlers(io: Server) {
       if (!effectiveRoomId) return;
       socket.to(effectiveRoomId).emit("user-media-state", { socketId: socket.id, type, enabled });
     });
-
-    // ---------- PHASE 3: CHAT (RELIABLE BROADCAST) ----------
-    socket.on("chat-message", (payload: any, ack?: (res: any) => void) => {
+  socket.on("chat-message", (payload: any, ack?: (res: any) => void) => {
       try {
         const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
         if (!roomId) {
@@ -618,20 +616,42 @@ export function registerSignallingHandlers(io: Server) {
           return;
         }
 
+        const isDirect = !!payload?.isDirect || !!payload?.message?.isDirect;
+        const recipientId = payload?.recipientId || payload?.message?.recipientId;
+        const recipientName = payload?.recipientName || payload?.message?.recipientName;
+
         const message = {
           id: payload?.message?.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           roomId,
           senderId: payload?.message?.senderId || payload?.userId || socket.id,
           senderName: payload?.message?.senderName || payload?.name || "Guest",
           senderAvatar: payload?.message?.senderAvatar || payload?.avatar || "",
-          text: String(payload?.message?.text || payload?.text || "").substring(0, 2000),
+          text: String(payload?.message?.text || payload?.text || "").substring(0, 5000),
+          isDirect,
+          recipientId: isDirect ? recipientId : undefined,
+          recipientName: isDirect ? recipientName : undefined,
           timestamp: payload?.message?.timestamp || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           ts: Date.now(),
         };
 
-        // Broadcast to EVERYONE in room INCLUDING sender for single source of truth
-        io.to(roomId).emit("chat-message", message);
-        logger.info(`[chat] ${message.senderName}: ${message.text}`);
+        if (isDirect && recipientId) {
+          // Direct message: deliver to sender & recipient only
+          socket.emit("chat-message", message);
+          const room = getRoom(roomId);
+          if (room) {
+            for (const [sockId, peer] of room.peers.entries()) {
+              if (sockId === recipientId || peer.userId === recipientId) {
+                io.to(sockId).emit("chat-message", message);
+              }
+            }
+          }
+          logger.info(`[private-chat] ${message.senderName} -> ${recipientName || recipientId}: ${message.text}`);
+        } else {
+          // Public message: Broadcast to everyone in room
+          io.to(roomId).emit("chat-message", message);
+          logger.info(`[public-chat] ${message.senderName}: ${message.text}`);
+        }
+
         if (typeof ack === "function") ack({ success: true, id: message.id });
       } catch (err: any) {
         logger.error(`[chat] error: ${err?.message}`);
