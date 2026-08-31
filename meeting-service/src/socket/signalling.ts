@@ -50,6 +50,7 @@ import { config } from "../config";
 import { mainBackendClient } from "../integrations/main-backend/mainBackendClient";
 
 const roomAdapter = createRoomAdapter(roomManager);
+const activeRecordings = new Map<string, { active: boolean; startedAt: number; hostId?: string }>();
 
 export function registerSignallingHandlers(io: Server) {
   io.on("connection", (socket: Socket) => {
@@ -171,6 +172,11 @@ export function registerSignallingHandlers(io: Server) {
 
           broadcastParticipants(roomId);
           hostControlService.recordLifecycle(roomId, "PARTICIPANT_JOINED", participant, { approved: isApproved });
+
+          const currentRec = activeRecordings.get(roomId);
+          if (currentRec?.active) {
+            socket.emit("recording-status", { active: true, startedAt: currentRec.startedAt, hostId: currentRec.hostId });
+          }
 
           if (typeof callback === "function") {
             callback({
@@ -872,6 +878,86 @@ export function registerSignallingHandlers(io: Server) {
           allMuted: getRoomAllMuted(roomId),
           allVideoHidden: getRoomAllVideoHidden(roomId),
         });
+      }
+    });
+
+    // ---------- RECORDING EVENTS ----------
+    socket.on("host:start-recording", (payload: any, ack?: (res: any) => void) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId || !isPrivileged(roomId)) {
+        if (typeof ack === "function") ack({ success: false, error: "not-host" });
+        return;
+      }
+      activeRecordings.set(roomId, { active: true, startedAt: Date.now(), hostId: socket.id });
+      io.to(roomId).emit("recording-status", { active: true, startedAt: Date.now(), hostId: socket.id });
+      logger.info(`[SFU] Room ${roomId} recording started by ${socket.id}`);
+      if (typeof ack === "function") ack({ success: true, active: true });
+    });
+
+    socket.on("host:stop-recording", (payload: any, ack?: (res: any) => void) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId || !isPrivileged(roomId)) {
+        if (typeof ack === "function") ack({ success: false, error: "not-host" });
+        return;
+      }
+      const rec = activeRecordings.get(roomId);
+      activeRecordings.delete(roomId);
+      io.to(roomId).emit("recording-status", { active: false, endedAt: Date.now(), startedAt: rec?.startedAt });
+      logger.info(`[SFU] Room ${roomId} recording stopped by ${socket.id}`);
+      if (typeof ack === "function") ack({ success: true, active: false });
+    });
+
+    socket.on("get-recording-status", (payload: any, ack?: (res: any) => void) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      const rec = roomId ? activeRecordings.get(roomId) : undefined;
+      if (typeof ack === "function") {
+        ack({ success: true, active: !!rec, startedAt: rec?.startedAt });
+      }
+    });
+
+    // ---------- REAL-TIME LIVE TRANSCRIPT EVENTS ----------
+    socket.on("send-transcript", async (payload: { roomId?: string; text: string; speakerName?: string; timestamp?: number }, ack?: (res: any) => void) => {
+      try {
+        const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+        if (!roomId || !payload?.text || !payload.text.trim()) {
+          if (typeof ack === "function") ack({ success: false });
+          return;
+        }
+
+        const participant = getParticipant(roomId, socket.id);
+        const transcriptPayload = {
+          participantId: participant?.userId || socket.id,
+          speakerName: payload.speakerName || participant?.displayName || "Participant",
+          text: payload.text.trim(),
+          timestamp: payload.timestamp || Date.now(),
+        };
+
+        // Broadcast real-time subtitle to everyone in the room
+        io.to(roomId).emit("transcript-update", transcriptPayload);
+
+        // Asynchronously save transcript chunk to Main Backend
+        const backendUrl = process.env.MAIN_BACKEND_URL || "http://localhost:5000";
+        try {
+          if (typeof globalThis.fetch === "function") {
+            globalThis.fetch(`${backendUrl}/api/collab/recording/transcript`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                roomId,
+                participantId: transcriptPayload.participantId,
+                text: transcriptPayload.text,
+                timestamp: transcriptPayload.timestamp,
+              }),
+            }).catch(() => {});
+          }
+        } catch {
+          // Ignore backend save errors
+        }
+
+        if (typeof ack === "function") ack({ success: true });
+      } catch (err) {
+        logger.error(`[SFU] send-transcript error:`, err);
+        if (typeof ack === "function") ack({ success: false });
       }
     });
 
