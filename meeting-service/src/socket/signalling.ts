@@ -916,7 +916,7 @@ export function registerSignallingHandlers(io: Server) {
     });
 
     // ---------- REAL-TIME LIVE TRANSCRIPT EVENTS ----------
-    socket.on("send-transcript", async (payload: { roomId?: string; text: string; speakerName?: string; timestamp?: number }, ack?: (res: any) => void) => {
+    socket.on("send-transcript", async (payload: { roomId?: string; text: string; speakerName?: string; isFinal?: boolean; timestamp?: number }, ack?: (res: any) => void) => {
       try {
         const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
         if (!roomId || !payload?.text || !payload.text.trim()) {
@@ -925,33 +925,37 @@ export function registerSignallingHandlers(io: Server) {
         }
 
         const participant = getParticipant(roomId, socket.id);
+        const isFinal = payload.isFinal !== false;
         const transcriptPayload = {
           participantId: participant?.userId || socket.id,
           speakerName: payload.speakerName || participant?.displayName || "Participant",
           text: payload.text.trim(),
+          isFinal,
           timestamp: payload.timestamp || Date.now(),
         };
 
         // Broadcast real-time subtitle to everyone in the room
         io.to(roomId).emit("transcript-update", transcriptPayload);
 
-        // Asynchronously save transcript chunk to Main Backend
-        const backendUrl = process.env.MAIN_BACKEND_URL || "http://localhost:5000";
-        try {
-          if (typeof globalThis.fetch === "function") {
-            globalThis.fetch(`${backendUrl}/api/collab/recording/transcript`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                roomId,
-                participantId: transcriptPayload.participantId,
-                text: transcriptPayload.text,
-                timestamp: transcriptPayload.timestamp,
-              }),
-            }).catch(() => {});
+        // Asynchronously save finalized transcript chunks to Main Backend
+        if (isFinal) {
+          const backendUrl = process.env.MAIN_BACKEND_URL || "http://localhost:5000";
+          try {
+            if (typeof globalThis.fetch === "function") {
+              globalThis.fetch(`${backendUrl}/api/collab/recording/transcript`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  roomId,
+                  participantId: transcriptPayload.participantId,
+                  text: transcriptPayload.text,
+                  timestamp: transcriptPayload.timestamp,
+                }),
+              }).catch(() => {});
+            }
+          } catch {
+            // Ignore backend save errors
           }
-        } catch {
-          // Ignore backend save errors
         }
 
         if (typeof ack === "function") ack({ success: true });
