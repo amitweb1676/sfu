@@ -1,3 +1,4 @@
+import { registerTranscriptEvents } from "./transcriptEvents";
 import { registerHostControlEvents } from "../host-controls/registerHostControlEvents";
 import { createRoomAdapter } from "../host-controls/createRoomAdapter";
 import { getRoomControlState } from "../host-controls/hostControl.state";
@@ -55,6 +56,7 @@ const activeRecordings = new Map<string, { active: boolean; startedAt: number; h
 export function registerSignallingHandlers(io: Server) {
   io.on("connection", (socket: Socket) => {
     const hostControlService = registerHostControlEvents({ io, socket, roomAdapter });
+    registerTranscriptEvents(socket, io);
     socket.emit("server-version", {
       version: "UPDATED ONE",
       timestamp: Date.now(),
