@@ -52,6 +52,7 @@ import { mainBackendClient } from "../integrations/main-backend/mainBackendClien
 
 const roomAdapter = createRoomAdapter(roomManager);
 const activeRecordings = new Map<string, { active: boolean; startedAt: number; hostId?: string }>();
+const activeRoomWhiteboards = new Map<string, { boardId: string; isOpen: boolean; isPresentingToAll: boolean; senderName?: string; senderId?: string; isHost?: boolean; timestamp?: number }>();
 
 export function registerSignallingHandlers(io: Server) {
   io.on("connection", (socket: Socket) => {
@@ -178,6 +179,12 @@ export function registerSignallingHandlers(io: Server) {
           const currentRec = activeRecordings.get(roomId);
           if (currentRec?.active) {
             socket.emit("recording-status", { active: true, startedAt: currentRec.startedAt, hostId: currentRec.hostId });
+          }
+
+          const currentWb = activeRoomWhiteboards.get(roomId);
+          if (currentWb && currentWb.isOpen) {
+            socket.emit("collab:whiteboard-sync", currentWb);
+            socket.emit("room:whiteboard", currentWb);
           }
 
           if (typeof callback === "function") {
@@ -984,6 +991,86 @@ export function registerSignallingHandlers(io: Server) {
       } catch (err) {
         logger.error(`[SFU] send-transcript error:`, err);
         if (typeof ack === "function") ack({ success: false });
+      }
+    });
+
+    // ---------- WHITEBOARD COLLABORATION & PRESENTATION SYNC ----------
+    socket.on("collab:whiteboard-sync", (payload: any, ack?: (res: any) => void) => {
+      try {
+        const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+        if (!roomId) {
+          if (typeof ack === "function") ack({ success: false, error: "no-room" });
+          return;
+        }
+
+        const participant = getParticipant(roomId, socket.id);
+        const isPres = payload?.isPresentingToAll !== false;
+        const isOpen = !!payload?.isOpen;
+
+        const syncData = {
+          roomId,
+          boardId: payload?.boardId,
+          isOpen,
+          isPresentingToAll: isPres,
+          senderId: participant?.userId || socket.id,
+          senderName: payload?.senderName || participant?.displayName || "Teacher",
+          isHost: isPrivileged(roomId),
+          timestamp: Date.now(),
+        };
+
+        if (isOpen && isPres) {
+          activeRoomWhiteboards.set(roomId, syncData);
+        } else if (!isOpen) {
+          activeRoomWhiteboards.delete(roomId);
+        }
+
+        // Broadcast to everyone in the room
+        io.to(roomId).emit("collab:whiteboard-sync", syncData);
+        io.to(roomId).emit("room:whiteboard", syncData);
+        logger.info(`[SFU] Whiteboard broadcast for room ${roomId}: isOpen=${isOpen}, isPresenting=${isPres}, boardId=${payload?.boardId}`);
+
+        if (typeof ack === "function") ack({ success: true });
+      } catch (err: any) {
+        logger.error(`[SFU] collab:whiteboard-sync error: ${err?.message}`);
+        if (typeof ack === "function") ack({ success: false, error: err?.message });
+      }
+    });
+
+    socket.on("room:whiteboard", (payload: any, ack?: (res: any) => void) => {
+      try {
+        const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+        if (!roomId) {
+          if (typeof ack === "function") ack({ success: false, error: "no-room" });
+          return;
+        }
+
+        const participant = getParticipant(roomId, socket.id);
+        const isPres = payload?.isPresentingToAll !== false;
+        const isOpen = !!payload?.isOpen;
+
+        const syncData = {
+          roomId,
+          boardId: payload?.boardId,
+          isOpen,
+          isPresentingToAll: isPres,
+          senderId: participant?.userId || socket.id,
+          senderName: payload?.senderName || participant?.displayName || "Teacher",
+          isHost: isPrivileged(roomId),
+          timestamp: Date.now(),
+        };
+
+        if (isOpen && isPres) {
+          activeRoomWhiteboards.set(roomId, syncData);
+        } else if (!isOpen) {
+          activeRoomWhiteboards.delete(roomId);
+        }
+
+        io.to(roomId).emit("collab:whiteboard-sync", syncData);
+        io.to(roomId).emit("room:whiteboard", syncData);
+
+        if (typeof ack === "function") ack({ success: true });
+      } catch (err: any) {
+        if (typeof ack === "function") ack({ success: false, error: err?.message });
       }
     });
 
