@@ -1074,6 +1074,58 @@ export function registerSignallingHandlers(io: Server) {
       }
     });
 
+  socket.on("collab:wb-canvas-op", (payload: any) => {
+      const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+      if (!roomId || !isPrivileged(roomId)) return;
+      // Relay only to OTHER sockets in the room (not back to host)
+      socket.to(roomId).emit("collab:wb-canvas-op", payload);
+    });
+
+    // ---------- WHITEBOARD ACCESS: Grant collaborative edit to a student ----------
+    socket.on("collab:wb-grant-access", (payload: any, ack?: (res: any) => void) => {
+      try {
+        const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+        if (!roomId || !isPrivileged(roomId)) {
+          if (typeof ack === "function") ack({ success: false, error: "not-privileged" });
+          return;
+        }
+        const { targetSocketId, boardId, boardTitle, grantedBy } = payload || {};
+        if (targetSocketId) {
+          io.to(targetSocketId).emit("collab:wb-access-granted", {
+            roomId,
+            boardId,
+            boardTitle,
+            grantedBy: grantedBy || "Host",
+          });
+          logger.info(`[SFU] Whiteboard access granted in room ${roomId} to socket ${targetSocketId}`);
+        }
+        if (typeof ack === "function") ack({ success: true });
+      } catch (err: any) {
+        logger.error(`[SFU] collab:wb-grant-access error: ${err?.message}`);
+        if (typeof ack === "function") ack({ success: false, error: err?.message });
+      }
+    });
+
+    // ---------- WHITEBOARD ACCESS: Revoke collaborative edit from a student ----------
+    socket.on("collab:wb-revoke-access", (payload: any, ack?: (res: any) => void) => {
+      try {
+        const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+        if (!roomId || !isPrivileged(roomId)) {
+          if (typeof ack === "function") ack({ success: false, error: "not-privileged" });
+          return;
+        }
+        const { targetSocketId } = payload || {};
+        if (targetSocketId) {
+          io.to(targetSocketId).emit("collab:wb-access-revoked", { roomId });
+          logger.info(`[SFU] Whiteboard access revoked in room ${roomId} from socket ${targetSocketId}`);
+        }
+        if (typeof ack === "function") ack({ success: true });
+      } catch (err: any) {
+        logger.error(`[SFU] collab:wb-revoke-access error: ${err?.message}`);
+        if (typeof ack === "function") ack({ success: false, error: err?.message });
+      }
+    });
+
     const handleLeaveRoom = (callback?: (res: any) => void) => {
       const roomId = currentRoomId || getRoomBySocketId(socket.id)?.roomId;
 
