@@ -625,6 +625,40 @@ export function registerSignallingHandlers(io: Server) {
           return;
         }
 
+        // 1. If this is a whiteboard or media sync payload that was emitted as chat-message,
+        // forward it as raw sync or ignore, but NEVER broadcast it as a text chat message!
+        const isSyncPayload = !!(
+          payload?.isWhiteboardSync ||
+          payload?.message?.isWhiteboardSync ||
+          payload?.isWhiteboardStateRequest ||
+          payload?.message?.isWhiteboardStateRequest ||
+          payload?.isWhiteboardAccessGrant ||
+          payload?.message?.isWhiteboardAccessGrant ||
+          payload?.isWhiteboardAccessRevoke ||
+          payload?.message?.isWhiteboardAccessRevoke ||
+          payload?.isMediaStateSync ||
+          payload?.message?.isMediaStateSync ||
+          payload?.isWhiteboardRequest ||
+          payload?.message?.isWhiteboardRequest
+        );
+
+        if (isSyncPayload) {
+          // Forward raw payload to room if needed for sync compatibility, but do NOT treat as chat
+          const syncData = payload?.message || payload;
+          socket.to(roomId).emit("chat-message", syncData);
+          if (typeof ack === "function") ack({ success: true, isSync: true });
+          return;
+        }
+
+        // 2. Validate non-empty text for real chat messages
+        const rawText = payload?.message?.text !== undefined ? payload?.message?.text : payload?.text;
+        const trimmedText = String(rawText || "").trim();
+        if (!trimmedText) {
+          // Do not broadcast or save empty messages!
+          if (typeof ack === "function") ack({ success: false, error: "empty-message" });
+          return;
+        }
+
         const isDirect = !!payload?.isDirect || !!payload?.message?.isDirect;
         const recipientId = payload?.recipientId || payload?.message?.recipientId;
         const recipientName = payload?.recipientName || payload?.message?.recipientName;
@@ -635,7 +669,7 @@ export function registerSignallingHandlers(io: Server) {
           senderId: payload?.message?.senderId || payload?.userId || socket.id,
           senderName: payload?.message?.senderName || payload?.name || "Guest",
           senderAvatar: payload?.message?.senderAvatar || payload?.avatar || "",
-          text: String(payload?.message?.text || payload?.text || "").substring(0, 5000),
+          text: trimmedText.substring(0, 5000),
           isDirect,
           recipientId: isDirect ? recipientId : undefined,
           recipientName: isDirect ? recipientName : undefined,
