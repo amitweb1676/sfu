@@ -534,6 +534,20 @@ export function registerSignallingHandlers(io: Server) {
       }
     });
 
+    socket.on("pause-consumer", async ({ consumerId }: { consumerId: string }, callback?: (res: any) => void) => {
+      try {
+        const consumer = findConsumer(socket.id, consumerId);
+        if (!consumer) return callback?.({ success: false, error: "Consumer not found" });
+
+        await consumer.pause();
+        console.log("[consumer-paused]", { socketId: socket.id, consumerId });
+        callback?.({ success: true });
+      } catch (err: any) {
+        logger.error("pause-consumer failed:", err);
+        callback?.({ success: false, error: err.message });
+      }
+    });
+
     socket.on("resume-consumer", async ({ consumerId }: { consumerId: string }, callback?: (res: any) => void) => {
       try {
         const consumer = findConsumer(socket.id, consumerId);
