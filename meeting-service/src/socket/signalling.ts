@@ -25,6 +25,7 @@ import {
   findConsumer,
   removeAllProducersAndConsumersFor,
   getRoom,
+  getRoomStartTime,
   getRoomBySocketId,
   getParticipantBySocketId,
   getRouter,
@@ -76,6 +77,7 @@ export function registerSignallingHandlers(io: Server) {
       io.to(roomId).emit("participants-updated", {
         participants: listParticipants(roomId),
         locked: isRoomLocked(roomId),
+        roomStartTime: getRoomStartTime(roomId),
       });
     };
 
@@ -198,6 +200,7 @@ export function registerSignallingHandlers(io: Server) {
               approved: isApproved,
               allMuted: roomAllMuted,
               allVideoHidden: roomAllVideoHidden,
+              roomStartTime: room.createdAt,
             });
           }
         } catch (err: any) {

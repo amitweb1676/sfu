@@ -30,6 +30,10 @@ export function getRoom(roomId: string): Room | undefined {
   return rooms.get(roomId);
 }
 
+export function getRoomStartTime(roomId: string): number | undefined {
+  return rooms.get(roomId)?.createdAt;
+}
+
 export function getRoomBySocketId(socketId: string): Room | undefined {
   for (const room of rooms.values()) {
     if (room.participants.has(socketId)) {
