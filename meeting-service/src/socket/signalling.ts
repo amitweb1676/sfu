@@ -667,10 +667,11 @@ export function registerSignallingHandlers(io: Server) {
           return;
         }
 
-        // 2. Validate non-empty text for real chat messages
+        // 2. Validate non-empty text or image for real chat messages
         const rawText = payload?.message?.text !== undefined ? payload?.message?.text : payload?.text;
+        const imageUrl = payload?.message?.imageUrl || payload?.imageUrl || null;
         const trimmedText = String(rawText || "").trim();
-        if (!trimmedText) {
+        if (!trimmedText && !imageUrl) {
           // Do not broadcast or save empty messages!
           if (typeof ack === "function") ack({ success: false, error: "empty-message" });
           return;
@@ -686,7 +687,8 @@ export function registerSignallingHandlers(io: Server) {
           senderId: payload?.message?.senderId || payload?.userId || socket.id,
           senderName: payload?.message?.senderName || payload?.name || "Guest",
           senderAvatar: payload?.message?.senderAvatar || payload?.avatar || "",
-          text: trimmedText.substring(0, 5000),
+          text: (trimmedText || (imageUrl ? "📷 Snapshot" : "")).substring(0, 5000),
+          imageUrl: imageUrl || undefined,
           isDirect,
           recipientId: isDirect ? recipientId : undefined,
           recipientName: isDirect ? recipientName : undefined,
