@@ -1,4 +1,5 @@
 import { registerTranscriptEvents } from "./transcriptEvents";
+import { registerQuizHandlers } from "../quiz/quizSocketHandlers";
 import { registerHostControlEvents } from "../host-controls/registerHostControlEvents";
 import { createRoomAdapter } from "../host-controls/createRoomAdapter";
 import { getRoomControlState } from "../host-controls/hostControl.state";
@@ -59,6 +60,7 @@ export function registerSignallingHandlers(io: Server) {
   io.on("connection", (socket: Socket) => {
     const hostControlService = registerHostControlEvents({ io, socket, roomAdapter });
     registerTranscriptEvents(socket, io);
+    registerQuizHandlers(io, socket);
     socket.emit("server-version", {
       version: "UPDATED ONE",
       timestamp: Date.now(),
@@ -135,6 +137,8 @@ export function registerSignallingHandlers(io: Server) {
           socket.data.role = finalRole;
           socket.data.userId = joiningUserId;
           socket.data.roomId = roomId;
+          socket.data.userName = displayName || "Participant";
+          socket.data.displayName = displayName || "Participant";
 
           console.info("[SFU][JOIN_ROLE]", {
             roomId,
