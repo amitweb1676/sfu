@@ -69,6 +69,10 @@ export function registerQuizHandlers(io: Server, socket: Socket) {
       roomSockets.forEach((s: any) => {
         const uId = s.data?.userId || s.id;
         const uName = s.data?.userName || s.data?.displayName || 'Participant';
+        const role = s.data?.role;
+        if (role === 'host' || role === 'co-host' || uId === quizDoc.createdBy) {
+          return; // Don't track host in student leaderboard
+        }
         roomState.ensureParticipant(uId, uName);
       });
 
@@ -182,6 +186,10 @@ export function registerQuizHandlers(io: Server, socket: Socket) {
     const roomState = quizStateManager.get(roomId);
     if (!roomState) return;
     roomState.pause();
+    if ((roomState as any).advanceTimer) {
+      clearTimeout((roomState as any).advanceTimer);
+      (roomState as any).advanceTimer = null;
+    }
     io.to(roomId).emit('quiz:paused');
   });
 
@@ -261,7 +269,7 @@ async function advanceQuestion(io: Server, roomId: string, quizId: string) {
 
   // Server-authoritative auto advance timer
   const durationMs = ((question.timeLimitSec || 20) * 1000) + QUESTION_END_GRACE_MS;
-  setTimeout(() => {
+  (roomState as any).advanceTimer = setTimeout(() => {
     const current = quizStateManager.get(roomId);
     if (!current || current.currentQuestionIndex !== nextIndex) return; // host already advanced
     io.to(roomId).emit('quiz:question-end');
