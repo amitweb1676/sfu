@@ -27,6 +27,13 @@ export function registerQuizHandlers(io: Server, socket: Socket) {
       const { roomId, quizId } = payload || {};
       if (!roomId || !quizId) return;
 
+      // Clean up existing timer for multi-quiz rounds
+      const existingState = quizStateManager.get(roomId);
+      if (existingState && (existingState as any).advanceTimer) {
+        clearTimeout((existingState as any).advanceTimer);
+        (existingState as any).advanceTimer = null;
+      }
+
       let quizDoc = payload.quiz || null;
 
       // If quiz not sent in payload, try direct DB
@@ -76,6 +83,10 @@ export function registerQuizHandlers(io: Server, socket: Socket) {
         roomState.ensureParticipant(uId, uName);
       });
 
+      // Broadcast initial leaderboard immediately
+      const initialLeaderboard = computeLeaderboard(roomState);
+      io.to(roomId).emit('quiz:leaderboard-update', initialLeaderboard);
+
       // Persist status change
       if (QuizCompetition) {
         QuizCompetition.findByIdAndUpdate(quizId, { status: 'welcome' }).catch(() => {});
@@ -124,8 +135,15 @@ export function registerQuizHandlers(io: Server, socket: Socket) {
         // Idempotency: Reject double submissions on the same question
         if (roomState.hasSubmitted(questionId, userId)) return;
 
-        const question = roomState.getCurrentQuestion();
-        if (!question || question.id !== questionId) return;
+        // Look up question by ID so participants advancing at their own pace are scored accurately
+        const question =
+          roomState.quiz?.questions?.find((q: any) => String(q.id) === String(questionId)) ||
+          roomState.getCurrentQuestion();
+
+        if (!question) {
+          logger.warn(`[quiz:answer-submit] Question not found for id=${questionId} in roomId=${roomId}`);
+          return;
+        }
 
         const submittedAt = Date.now();
         roomState.recordSubmission(questionId, userId, optionId, submittedAt);
@@ -267,6 +285,10 @@ async function advanceQuestion(io: Server, roomId: string, quizId: string) {
     serverStartedAt: roomState.questionStartedAt,
   });
 
+  // Keep leaderboard synchronized across all participants on question advance
+  const currentLeaderboard = computeLeaderboard(roomState);
+  io.to(roomId).emit('quiz:leaderboard-update', currentLeaderboard);
+
   // Server-authoritative auto advance timer
   const durationMs = ((question.timeLimitSec || 20) * 1000) + QUESTION_END_GRACE_MS;
   (roomState as any).advanceTimer = setTimeout(() => {
@@ -285,6 +307,11 @@ async function advanceQuestion(io: Server, roomId: string, quizId: string) {
 async function endQuiz(io: Server, roomId: string, quizId: string) {
   const roomState = quizStateManager.get(roomId);
   if (!roomState) return;
+
+  if ((roomState as any).advanceTimer) {
+    clearTimeout((roomState as any).advanceTimer);
+    (roomState as any).advanceTimer = null;
+  }
 
   roomState.end();
   const leaderboard = computeLeaderboard(roomState);
