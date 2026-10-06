@@ -1,4 +1,5 @@
 import { registerTranscriptEvents } from "./transcriptEvents";
+import { registerQuizSocketHandlers } from "../activities/quiz/quiz.socket";
 import { registerHostControlEvents } from "../host-controls/registerHostControlEvents";
 import { createRoomAdapter } from "../host-controls/createRoomAdapter";
 import { getRoomControlState } from "../host-controls/hostControl.state";
@@ -59,6 +60,7 @@ export function registerSignallingHandlers(io: Server) {
   io.on("connection", (socket: Socket) => {
     const hostControlService = registerHostControlEvents({ io, socket, roomAdapter });
     registerTranscriptEvents(socket, io);
+    registerQuizSocketHandlers(io, socket);
     socket.emit("server-version", {
       version: "UPDATED ONE",
       timestamp: Date.now(),
