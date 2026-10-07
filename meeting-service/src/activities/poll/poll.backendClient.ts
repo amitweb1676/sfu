@@ -1,4 +1,4 @@
-﻿import axios from "axios";
+import axios from "axios";
 import { PollResults, PollSettingsInput, PublicPoll } from "./poll.types";
 
 const client = axios.create({
@@ -37,9 +37,11 @@ export async function getResults(pollId: string, tutorId: string) {
   };
 }
 
-export async function getPollHistory(classroomId: string, tutorId: string) {
-  return unwrap(await client.get(`/api/v1/poll/classroom/${classroomId}/history`, { params: { tutorId } })) as any[];
+export async function getHistory(classroomId: string, tutorId: string) {
+  const d = unwrap(await client.get(`/api/v1/poll/classroom/${classroomId}/history`, { params: { tutorId } }));
+  return (d?.polls ?? d) as any[];
 }
+export const getPollHistory = getHistory;
 
 export async function exportCsv(pollId: string, tutorId: string): Promise<string> {
   const r = await client.get(`/api/v1/poll/${pollId}/export`, {
