@@ -1,52 +1,75 @@
-// meeting-service/src/activities/quiz/quiz.backendClient.ts
 import axios from "axios";
 
-const MAIN_BACKEND_BASE_URL = (process.env.MAIN_BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
-const API_KEY = process.env.COLLABORATION_API_KEY || "";
-
 const client = axios.create({
-  baseURL: MAIN_BACKEND_BASE_URL,
-  headers: { "x-collaboration-api-key": API_KEY },
+  baseURL: process.env.MAIN_BACKEND_URL || "http://localhost:5000",
+  headers: { "x-collaboration-api-key": process.env.COLLABORATION_API_KEY as string },
   timeout: 8000,
 });
 
-export async function fetchActiveQuestion(classroomId: string, studentId: string) {
-  const { data } = await client.get(
-    `/api/v1/quiz/active-question?classroomId=${classroomId}&studentId=${studentId}`
-  );
-  return data?.data?.activeQuestion;
+const unwrap = (r: any) => r.data?.data ?? r.data;
+export const errMsg = (e: any) => e?.response?.data?.message || e?.message || "Request failed";
+
+export async function listTutorQuizzes(tutorId: string) {
+  const d = unwrap(await client.get(`/api/v1/quiz/tutor/${tutorId}`));
+  return d.quizzes ?? d;
 }
 
-export async function activateQuestionInBackend(quizId: string, questionId: string) {
-  const { data } = await client.post(`/api/v1/quiz/questions/activate`, { quizId, questionId });
-  return data;
-}
-
-export async function submitAnswerInBackend(payload: {
-  studentId: string;
+export async function createQuiz(p: {
   classroomId: string;
-  questionId: string;
-  studentAnswer: any;
-  responseTimeSeconds: number;
+  tutorId: string;
+  title: string;
+  quiz_type: "instant" | "advance";
 }) {
-  const { data } = await client.post(`/api/v1/quiz/submit-answer`, payload);
-  return data?.data;
+  const d = unwrap(await client.post(`/api/v1/quiz/create`, p));
+  return d.quiz ?? d;
 }
 
-export async function getLeaderboard(quizId: string, isTutor: boolean) {
-  const { data } = await client.get(`/api/v1/quiz/${quizId}/leaderboard?isTutor=${isTutor}`);
-  return data?.data?.leaderboard || [];
+export async function getQuizQuestions(
+  quizId: string,
+  q: { tutorId?: string; studentId?: string }
+) {
+  const d = unwrap(await client.get(`/api/v1/quiz/${quizId}/questions`, { params: q }));
+  return d.questions ?? d;
 }
 
-export async function toggleLeaderboardPermission(quizId: string, showLeaderboard: boolean) {
-  const { data } = await client.post(`/api/v1/quiz/${quizId}/leaderboard/permission`, {
-    quizId,
-    showLeaderboard,
+export async function addQuestion(p: any) {
+  const d = unwrap(await client.post(`/api/v1/quiz/questions/add`, p));
+  return d.question ?? d;
+}
+
+export async function instantLaunch(p: any) {
+  return unwrap(await client.post(`/api/v1/quiz/instant/launch`, p));
+}
+
+export async function activateQuestion(quizId: string, questionId: string) {
+  return unwrap(await client.post(`/api/v1/quiz/questions/activate`, { quizId, questionId }));
+}
+
+export async function submitAnswer(p: any) {
+  return unwrap(await client.post(`/api/v1/quiz/submit-answer`, p));
+}
+
+export async function getLeaderboard(quizId: string) {
+  const d = unwrap(await client.get(`/api/v1/quiz/${quizId}/leaderboard`, { params: { isTutor: true } }));
+  return d.leaderboard ?? d;
+}
+
+export async function setLeaderboardPermission(quizId: string, showLeaderboard: boolean) {
+  return unwrap(await client.post(`/api/v1/quiz/${quizId}/leaderboard/permission`, { quizId, showLeaderboard }));
+}
+
+export async function completeQuiz(quizId: string, tutorId: string) {
+  return unwrap(await client.post(`/api/v1/quiz/${quizId}/complete`, { tutorId }));
+}
+
+export async function getAnalytics(quizId: string, tutorId: string) {
+  return unwrap(await client.get(`/api/v1/quiz/${quizId}/analytics`, { params: { tutorId } }));
+}
+
+export async function exportCsv(quizId: string, tutorId: string): Promise<string> {
+  const r = await client.get(`/api/v1/quiz/${quizId}/export`, {
+    params: { tutorId },
+    responseType: "text",
   });
-  return data;
-}
-
-export async function completeQuizInBackend(quizId: string, tutorId: string) {
-  const { data } = await client.post(`/api/v1/quiz/${quizId}/complete`, { tutorId });
-  return data;
+  return r.data as string;
 }

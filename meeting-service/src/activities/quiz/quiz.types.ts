@@ -1,39 +1,25 @@
 // meeting-service/src/activities/quiz/quiz.types.ts
 
+export type QuizMode = "live" | "advance";
+export type Ack = (res: { ok: boolean; data?: any; error?: string }) => void;
+
 export interface QuizJoinPayload {
-  quizId: string;
   classroomId: string;
   studentId?: string;
   tutorId?: string;
   role: "host" | "student";
 }
 
-export interface ActivateQuestionPayload {
-  quizId: string;
-  classroomId: string;
-  questionId: string;
-  tutorId: string;
-}
-
-export interface SubmitAnswerPayload {
-  quizId: string;
-  classroomId: string;
-  questionId: string;
-  studentId: string;
-  studentAnswer: any;
-  responseTimeSeconds: number;
-}
-
 export interface LiveQuestionState {
   questionId: string;
   questionType: string;
   question: string;
-  options?: string[];
+  options: any; // student-safe options only
   points: number;
   sequenceOrder: number;
   timeLimitSeconds?: number;
-  activatedAt: number;        // epoch ms, server-authoritative
-  expiresAt?: number;         // epoch ms, server-authoritative
+  activatedAt: number;
+  expiresAt?: number;
   submittedStudentIds: Set<string>;
 }
 
@@ -41,9 +27,11 @@ export interface RoomQuizState {
   quizId: string;
   classroomId: string;
   tutorId: string;
-  status: "draft" | "active" | "completed" | "cancelled";
+  mode: QuizMode;
+  status: "active" | "completed";
   showLeaderboard: boolean;
-  currentQuestion: LiveQuestionState | null;
   paused: boolean;
   pausedRemainingMs?: number;
+  currentQuestion: LiveQuestionState | null;
+  leaderboard: any[];
 }
