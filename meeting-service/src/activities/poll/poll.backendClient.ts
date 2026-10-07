@@ -1,9 +1,13 @@
-import axios from "axios";
+﻿import axios from "axios";
 import { PollResults, PollSettingsInput, PublicPoll } from "./poll.types";
 
 const client = axios.create({
   baseURL: process.env.MAIN_BACKEND_URL || "http://localhost:5000",
-  headers: { "x-collaboration-api-key": process.env.COLLABORATION_API_KEY as string },
+  headers: {
+    ...(process.env.COLLABORATION_API_KEY
+      ? { "x-collaboration-api-key": process.env.COLLABORATION_API_KEY }
+      : {}),
+  },
   timeout: 8000,
 });
 
@@ -28,17 +32,19 @@ export async function setResultsVisibility(pollId: string, tutorId: string, visi
 
 export async function getResults(pollId: string, tutorId: string) {
   return unwrap(await client.get(`/api/v1/poll/${pollId}/results`, { params: { tutorId } })) as {
-    poll: PublicPoll;
     results: PollResults;
+    poll: PublicPoll;
   };
 }
 
-export async function getHistory(classroomId: string, tutorId: string) {
-  const d = unwrap(await client.get(`/api/v1/poll/classroom/${classroomId}/history`, { params: { tutorId } }));
-  return d.polls as any[];
+export async function getPollHistory(classroomId: string, tutorId: string) {
+  return unwrap(await client.get(`/api/v1/poll/classroom/${classroomId}/history`, { params: { tutorId } })) as any[];
 }
 
 export async function exportCsv(pollId: string, tutorId: string): Promise<string> {
-  const r = await client.get(`/api/v1/poll/${pollId}/export`, { params: { tutorId }, responseType: "text" });
+  const r = await client.get(`/api/v1/poll/${pollId}/export`, {
+    params: { tutorId },
+    responseType: "text",
+  });
   return r.data as string;
 }

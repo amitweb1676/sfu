@@ -1,4 +1,4 @@
-// meeting-service/src/activities/quiz/quiz.socket.ts
+﻿// meeting-service/src/activities/quiz/quiz.socket.ts
 import { Server, Socket } from "socket.io";
 import {
   getRoomQuiz,
@@ -119,7 +119,9 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
       const normalized = Array.isArray(quizzes) ? quizzes.map(normalizeQuizSummary) : [];
       safeAck(ack, { ok: true, data: normalized });
     } catch (err: any) {
-      safeAck(ack, { ok: false, error: errMsg(err) });
+      console.warn("[quiz:host:list-quizzes] Backend unavailable or failed, defaulting to empty list:", errMsg(err));
+      // Return empty array so host can still create and launch instant questions without UI error
+      safeAck(ack, { ok: true, data: [] });
     }
   });
 
@@ -819,3 +821,4 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
     }
   );
 }
+

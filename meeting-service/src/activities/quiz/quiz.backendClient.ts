@@ -1,8 +1,12 @@
-import axios from "axios";
+﻿import axios from "axios";
 
 const client = axios.create({
   baseURL: process.env.MAIN_BACKEND_URL || "http://localhost:5000",
-  headers: { "x-collaboration-api-key": process.env.COLLABORATION_API_KEY as string },
+  headers: {
+    ...(process.env.COLLABORATION_API_KEY
+      ? { "x-collaboration-api-key": process.env.COLLABORATION_API_KEY }
+      : {}),
+  },
   timeout: 8000,
 });
 
