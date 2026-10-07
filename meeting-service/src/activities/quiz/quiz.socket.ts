@@ -34,6 +34,7 @@ import {
   toStudentSafe,
 } from "./quiz.mapper";
 import { isHostOrCoHost } from "./quiz.permissions";
+import { isPollRunning } from "../activity.guard";
 
 const classroomRoom = (classroomId: string) => `classroom:${classroomId}`;
 const quizHostRoom = (classroomId: string) => `quiz-host:${classroomId}`;
@@ -188,6 +189,10 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
     ) => {
       try {
         const { classroomId, quizId, questionId, tutorId } = payload;
+        if (isPollRunning(classroomId)) {
+          safeAck(ack, { ok: false, error: "A poll is running. Close it first." });
+          return;
+        }
         await activateQuestion(quizId, questionId);
 
         let rawQ = payload.question;
@@ -290,6 +295,10 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
       ack?: Ack
     ) => {
       try {
+        if (isPollRunning(payload.classroomId)) {
+          safeAck(ack, { ok: false, error: "A poll is running. Close it first." });
+          return;
+        }
         const launchData = await instantLaunch(payload);
         const quizId = launchData.quizId;
         const questionId = launchData.questionId;
@@ -605,6 +614,10 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
     ) => {
       try {
         const { classroomId, quizId, tutorId } = payload;
+        if (isPollRunning(classroomId)) {
+          safeAck(ack, { ok: false, error: "A poll is running. Close it first." });
+          return;
+        }
         setRoomQuiz(classroomId, {
           quizId,
           classroomId,

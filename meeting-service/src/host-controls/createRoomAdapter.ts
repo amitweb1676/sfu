@@ -1,4 +1,4 @@
-"use strict";
+import { cleanupPoll } from "../activities/poll";
 
 export interface RoomAdapter {
   getParticipant: (roomId: string, socketId: string) => any;
@@ -59,6 +59,7 @@ export function createRoomAdapter(roomManager: any): RoomAdapter {
     },
 
     async closeRoomMedia(roomId: string, reason?: string) {
+      cleanupPoll(roomId);
       if (typeof roomManager.closeRoom === "function") {
         return await roomManager.closeRoom(roomId, reason);
       }
