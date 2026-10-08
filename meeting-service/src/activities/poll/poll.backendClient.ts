@@ -1,13 +1,13 @@
 import axios from "axios";
 import { PollResults, PollSettingsInput, PublicPoll } from "./poll.types";
 
+const baseURL =
+  process.env.MAIN_BACKEND_BASE_URL ||
+  process.env.MAIN_BACKEND_URL ||
+  "https://newtesting.universalgurukul.com";
 const client = axios.create({
-  baseURL: process.env.MAIN_BACKEND_URL || "http://localhost:5000",
-  headers: {
-    ...(process.env.COLLABORATION_API_KEY
-      ? { "x-collaboration-api-key": process.env.COLLABORATION_API_KEY }
-      : {}),
-  },
+  baseURL,
+  headers: { "x-collaboration-api-key": process.env.COLLABORATION_API_KEY as string },
   timeout: 8000,
 });
 
