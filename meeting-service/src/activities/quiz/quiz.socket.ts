@@ -1,4 +1,4 @@
-﻿// meeting-service/src/activities/quiz/quiz.socket.ts
+// meeting-service/src/activities/quiz/quiz.socket.ts
 import { Server, Socket } from "socket.io";
 import {
   getRoomQuiz,
@@ -704,28 +704,32 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
   socket.on(
     "quiz:host:toggle-leaderboard",
     async (
-      payload: { classroomId: string; quizId: string; showLeaderboard: boolean },
+      payload: { classroomId: string; quizId?: string; showLeaderboard: boolean },
       ack?: Ack
     ) => {
       try {
-        await setLeaderboardPermission(payload.quizId, payload.showLeaderboard);
+        const roomState = getRoomQuiz(payload.classroomId);
+        const quizId = payload.quizId || roomState?.quizId;
+        if (!quizId) {
+          // No active quiz — silently ignore (leaderboard toggle is fire-and-forget)
+          safeAck(ack, { ok: true, data: { showLeaderboard: payload.showLeaderboard } });
+          return;
+        }
+        await setLeaderboardPermission(quizId, payload.showLeaderboard);
         updateRoomQuiz(payload.classroomId, (s) => ({
           ...s,
           showLeaderboard: payload.showLeaderboard,
         }));
-
-        const leaderboard = await getLeaderboard(payload.quizId);
+        const leaderboard = await getLeaderboard(quizId);
         io.to(classroomRoom(payload.classroomId)).emit("quiz:leaderboard_permission_changed", {
-          quizId: payload.quizId,
+          quizId,
           showLeaderboard: payload.showLeaderboard,
         });
-
         io.to(classroomRoom(payload.classroomId)).emit("quiz:leaderboard_updated", {
-          quizId: payload.quizId,
+          quizId,
           showLeaderboard: payload.showLeaderboard,
           leaderboard: payload.showLeaderboard ? leaderboard : [],
         });
-
         safeAck(ack, { ok: true, data: { showLeaderboard: payload.showLeaderboard } });
       } catch (err: any) {
         safeAck(ack, { ok: false, error: errMsg(err) });
@@ -737,19 +741,24 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
   socket.on(
     "quiz:host:end",
     async (
-      payload: { classroomId: string; quizId: string; tutorId: string },
+      payload: { classroomId: string; quizId?: string; tutorId: string },
       ack?: Ack
     ) => {
       try {
-        await completeQuiz(payload.quizId, payload.tutorId);
+        // Get quizId from in-memory room state — frontend does not send it
+        const roomState = getRoomQuiz(payload.classroomId);
+        const quizId = payload.quizId || roomState?.quizId;
+        if (!quizId) {
+          safeAck(ack, { ok: false, error: "No active quiz found to end." });
+          return;
+        }
+        await completeQuiz(quizId, payload.tutorId);
         clearQuestionTimer(payload.classroomId);
-
-        const finalLeaderboard = await getLeaderboard(payload.quizId);
+        const finalLeaderboard = await getLeaderboard(quizId);
         io.to(classroomRoom(payload.classroomId)).emit("quiz:completed", {
-          quizId: payload.quizId,
+          quizId,
           finalLeaderboard,
         });
-
         clearRoomQuiz(payload.classroomId);
         safeAck(ack, { ok: true, data: { finalLeaderboard } });
       } catch (err: any) {

@@ -1,4 +1,4 @@
-﻿import axios from "axios";
+import axios from "axios";
 
 const client = axios.create({
   baseURL: process.env.MAIN_BACKEND_URL || "http://localhost:5000",
@@ -38,7 +38,12 @@ export async function getQuizQuestions(
 
 export async function addQuestion(p: any) {
   const d = unwrap(await client.post(`/api/v1/quiz/questions/add`, p));
-  return d.question ?? d;
+  const q = d.question ?? d;
+  // Backend returns key "id" — remap so normalizeQuestion mapper can find it
+  return {
+    ...q,
+    question_id: q.question_id ?? q.questionId ?? q.id,
+  };
 }
 
 export async function instantLaunch(p: any) {
