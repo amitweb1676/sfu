@@ -10,6 +10,7 @@ import { scheduleQuestionExpiry, clearQuestionTimer } from "./quiz.timer";
 import {
   listTutorQuizzes,
   createQuiz,
+  openQuiz,
   getQuizQuestions,
   addQuestion,
   instantLaunch,
@@ -620,6 +621,15 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           safeAck(ack, { ok: false, error: "A poll is running. Close it first." });
           return;
         }
+
+        // 1. Tell Express backend to mark quiz as active in MongoDB
+        try {
+          await openQuiz(quizId, tutorId);
+        } catch (backendErr) {
+          console.warn("[quiz:host:open-advance] Notice updating quiz status in backend:", errMsg(backendErr));
+        }
+
+        // 2. Update SFU in-memory state
         setRoomQuiz(classroomId, {
           quizId,
           classroomId,
@@ -632,6 +642,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           leaderboard: [],
         });
 
+        // 3. Broadcast to all classroom participants
         io.to(classroomRoom(classroomId)).emit("quiz:advance_opened", {
           quizId,
           serverNow: Date.now(),
@@ -687,6 +698,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           responseTimeSeconds: payload.responseTimeSeconds || 0,
         });
 
+        // Send private result back to student
         socket.emit("quiz:answer_submitted", {
           questionId: payload.questionId,
           isCorrect: result?.isCorrect,
@@ -694,6 +706,33 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
         });
 
         safeAck(ack, { ok: true, data: result });
+
+        // Realtime update: fetch latest leaderboard and broadcast to host
+        try {
+          const roomState = getRoomQuiz(payload.classroomId);
+          const leaderboard = await getLeaderboard(payload.quizId);
+          if (roomState) {
+            roomState.leaderboard = leaderboard;
+          }
+
+          // Always push live leaderboard update to Host room
+          io.to(quizHostRoom(payload.classroomId)).emit("quiz:leaderboard_updated", {
+            quizId: payload.quizId,
+            showLeaderboard: roomState?.showLeaderboard ?? false,
+            leaderboard,
+          });
+
+          // If host toggled leaderboard on for students, push to whole classroom
+          if (roomState?.showLeaderboard) {
+            io.to(classroomRoom(payload.classroomId)).emit("quiz:leaderboard_updated", {
+              quizId: payload.quizId,
+              showLeaderboard: true,
+              leaderboard,
+            });
+          }
+        } catch (lbErr) {
+          console.warn("[CollaborationQuiz] advance leaderboard refresh error:", lbErr);
+        }
       } catch (err: any) {
         safeAck(ack, { ok: false, error: errMsg(err) });
       }

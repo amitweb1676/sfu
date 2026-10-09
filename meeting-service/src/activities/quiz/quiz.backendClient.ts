@@ -28,6 +28,12 @@ export async function createQuiz(p: {
   return d.quiz ?? d;
 }
 
+export async function openQuiz(quizId: string, tutorId?: string) {
+  return unwrap(
+    await client.post(`/api/v1/quiz/${quizId}/open`, { tutorId })
+  );
+}
+
 export async function getQuizQuestions(
   quizId: string,
   q: { tutorId?: string; studentId?: string }
