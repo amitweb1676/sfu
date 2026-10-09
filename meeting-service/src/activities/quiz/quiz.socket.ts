@@ -512,7 +512,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
     async (
       payload: {
         classroomId: string;
-        quizId: string;
+        quizId?: string;
         questionId: string;
         studentId: string;
         studentName?: string;
@@ -522,8 +522,10 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
       ack?: Ack
     ) => {
       try {
-        const { classroomId, quizId, questionId, studentId, studentName, studentAnswer } = payload;
+        // 1. Safe quizId resolution:
+        const { classroomId, quizId: rawQuizId, questionId, studentId, studentName, studentAnswer } = payload;
         const roomState = getRoomQuiz(classroomId);
+        const quizId = rawQuizId || roomState?.quizId;
 
         if (!roomState || !roomState.currentQuestion) {
           safeAck(ack, { ok: false, error: "No active question" });
@@ -566,14 +568,18 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           responseTimeSeconds: payload.responseTimeSeconds ?? serverResponseTime,
         });
 
-        // Private acknowledgment to submitting student
+        // 2. Unpack isCorrect and pointsEarned (so it never comes as undefined):
+        const isCorrect = result?.isCorrect ?? result?.submission?.isCorrect ?? false;
+        const pointsEarned = result?.pointsEarned ?? result?.submission?.pointsEarned ?? 0;
+
+        // Send private result back to student
         socket.emit("quiz:answer_submitted", {
-          questionId,
-          isCorrect: result?.isCorrect,
-          pointsEarned: result?.pointsEarned,
+          questionId: payload.questionId,
+          isCorrect,
+          pointsEarned,
         });
 
-        safeAck(ack, { ok: true, data: result });
+        safeAck(ack, { ok: true, data: { ...result, isCorrect, pointsEarned } });
 
         // Realtime submission count progress to host
         io.to(quizHostRoom(classroomId)).emit("quiz:progress", {
@@ -583,21 +589,23 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
 
         // Update leaderboard
         try {
-          const leaderboard = await getLeaderboard(quizId);
-          roomState.leaderboard = leaderboard;
-          if (roomState.showLeaderboard) {
-            io.to(classroomRoom(classroomId)).emit("quiz:leaderboard_updated", {
-              quizId,
-              showLeaderboard: true,
-              leaderboard,
-            });
-          } else {
-            // Host always receives live leaderboard update
-            io.to(quizHostRoom(classroomId)).emit("quiz:leaderboard_updated", {
-              quizId,
-              showLeaderboard: false,
-              leaderboard,
-            });
+          if (quizId) {
+            const leaderboard = await getLeaderboard(quizId);
+            roomState.leaderboard = leaderboard;
+            if (roomState.showLeaderboard) {
+              io.to(classroomRoom(classroomId)).emit("quiz:leaderboard_updated", {
+                quizId,
+                showLeaderboard: true,
+                leaderboard,
+              });
+            } else {
+              // Host always receives live leaderboard update
+              io.to(quizHostRoom(classroomId)).emit("quiz:leaderboard_updated", {
+                quizId,
+                showLeaderboard: false,
+                leaderboard,
+              });
+            }
           }
         } catch (lbErr) {
           console.warn("[CollaborationQuiz] leaderboard refresh error:", lbErr);
@@ -678,7 +686,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
     async (
       payload: {
         classroomId: string;
-        quizId: string;
+        quizId?: string;
         questionId: string;
         studentId: string;
         studentName?: string;
@@ -688,47 +696,57 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
       ack?: Ack
     ) => {
       try {
+        // 1. Safe quizId resolution:
+        const { classroomId, quizId: rawQuizId, questionId, studentId, studentName, studentAnswer } = payload;
+        const roomState = getRoomQuiz(classroomId);
+        const quizId = rawQuizId || roomState?.quizId;
+
         const result = await submitAnswer({
-          quizId: payload.quizId,
-          classroomId: payload.classroomId,
-          questionId: payload.questionId,
-          studentId: payload.studentId,
-          studentName: payload.studentName || "",
-          studentAnswer: payload.studentAnswer,
+          quizId,
+          classroomId,
+          questionId,
+          studentId,
+          studentName: studentName || "",
+          studentAnswer,
           responseTimeSeconds: payload.responseTimeSeconds || 0,
         });
+
+        // 2. Unpack isCorrect and pointsEarned (so it never comes as undefined):
+        const isCorrect = result?.isCorrect ?? result?.submission?.isCorrect ?? false;
+        const pointsEarned = result?.pointsEarned ?? result?.submission?.pointsEarned ?? 0;
 
         // Send private result back to student
         socket.emit("quiz:answer_submitted", {
           questionId: payload.questionId,
-          isCorrect: result?.isCorrect,
-          pointsEarned: result?.pointsEarned,
+          isCorrect,
+          pointsEarned,
         });
 
-        safeAck(ack, { ok: true, data: result });
+        safeAck(ack, { ok: true, data: { ...result, isCorrect, pointsEarned } });
 
         // Realtime update: fetch latest leaderboard and broadcast to host
         try {
-          const roomState = getRoomQuiz(payload.classroomId);
-          const leaderboard = await getLeaderboard(payload.quizId);
-          if (roomState) {
-            roomState.leaderboard = leaderboard;
-          }
+          if (quizId) {
+            const leaderboard = await getLeaderboard(quizId);
+            if (roomState) {
+              roomState.leaderboard = leaderboard;
+            }
 
-          // Always push live leaderboard update to Host room
-          io.to(quizHostRoom(payload.classroomId)).emit("quiz:leaderboard_updated", {
-            quizId: payload.quizId,
-            showLeaderboard: roomState?.showLeaderboard ?? false,
-            leaderboard,
-          });
-
-          // If host toggled leaderboard on for students, push to whole classroom
-          if (roomState?.showLeaderboard) {
-            io.to(classroomRoom(payload.classroomId)).emit("quiz:leaderboard_updated", {
-              quizId: payload.quizId,
-              showLeaderboard: true,
+            // Always push live leaderboard update to Host room
+            io.to(quizHostRoom(classroomId)).emit("quiz:leaderboard_updated", {
+              quizId,
+              showLeaderboard: roomState?.showLeaderboard ?? false,
               leaderboard,
             });
+
+            // If host toggled leaderboard on for students, push to whole classroom
+            if (roomState?.showLeaderboard) {
+              io.to(classroomRoom(classroomId)).emit("quiz:leaderboard_updated", {
+                quizId,
+                showLeaderboard: true,
+                leaderboard,
+              });
+            }
           }
         } catch (lbErr) {
           console.warn("[CollaborationQuiz] advance leaderboard refresh error:", lbErr);
