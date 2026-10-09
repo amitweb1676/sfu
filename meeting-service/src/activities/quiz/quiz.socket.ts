@@ -16,6 +16,7 @@ import {
   instantLaunch,
   activateQuestion,
   submitAnswer,
+  addTime,
   getLeaderboard,
   setLeaderboardPermission,
   completeQuiz,
@@ -70,6 +71,15 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
 
       const roomState = getRoomQuiz(classroomId);
       if (roomState) {
+        const now = Date.now();
+        let activeQuestion = roomState.currentQuestion;
+
+        // If question has already expired, clear it out so student is not served stale questions
+        if (activeQuestion && activeQuestion.expiresAt && activeQuestion.expiresAt <= now) {
+          roomState.currentQuestion = null;
+          activeQuestion = null;
+        }
+
         socket.emit("quiz:state_sync", {
           quizId: roomState.quizId,
           classroomId: roomState.classroomId,
@@ -77,21 +87,21 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           status: roomState.status,
           paused: roomState.paused,
           showLeaderboard: roomState.showLeaderboard,
-          currentQuestion: roomState.currentQuestion
+          currentQuestion: activeQuestion
             ? {
-                questionId: roomState.currentQuestion.questionId,
-                questionType: roomState.currentQuestion.questionType,
-                question: roomState.currentQuestion.question,
-                options: roomState.currentQuestion.options,
-                points: roomState.currentQuestion.points,
-                sequenceOrder: roomState.currentQuestion.sequenceOrder,
-                timeLimitSeconds: roomState.currentQuestion.timeLimitSeconds,
-                activatedAt: roomState.currentQuestion.activatedAt,
-                expiresAt: roomState.currentQuestion.expiresAt,
+                questionId: activeQuestion.questionId,
+                questionType: activeQuestion.questionType,
+                question: activeQuestion.question,
+                options: activeQuestion.options,
+                points: activeQuestion.points,
+                sequenceOrder: activeQuestion.sequenceOrder,
+                timeLimitSeconds: activeQuestion.timeLimitSeconds,
+                activatedAt: activeQuestion.activatedAt,
+                expiresAt: activeQuestion.expiresAt,
               }
             : null,
           leaderboard: roomState.showLeaderboard || isHost ? roomState.leaderboard : [],
-          serverNow: Date.now(),
+          serverNow: now,
         });
       }
 
@@ -255,9 +265,14 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
 
         if (safeQ.timeLimitSeconds) {
           scheduleQuestionExpiry(classroomId, safeQ.timeLimitSeconds, () => {
+            const rs = getRoomQuiz(classroomId);
+            if (rs) {
+              rs.currentQuestion = null;
+            }
             io.to(classroomRoom(classroomId)).emit("quiz:question_expired", {
               quizId,
               questionId: safeQ.questionId,
+              classroomId,
             });
           });
         }
@@ -355,9 +370,14 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
 
         if (safeQ.timeLimitSeconds) {
           scheduleQuestionExpiry(payload.classroomId, safeQ.timeLimitSeconds, () => {
+            const rs = getRoomQuiz(payload.classroomId);
+            if (rs) {
+              rs.currentQuestion = null;
+            }
             io.to(classroomRoom(payload.classroomId)).emit("quiz:question_expired", {
               quizId,
               questionId: safeQ.questionId,
+              classroomId: payload.classroomId,
             });
           });
         }
@@ -444,9 +464,15 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
 
         if (expiresAt && remainingMs > 0) {
           scheduleQuestionExpiry(payload.classroomId, Math.ceil(remainingMs / 1000), () => {
+            const rs = getRoomQuiz(payload.classroomId);
+            const expiredQId = rs?.currentQuestion?.questionId || roomState.currentQuestion?.questionId;
+            if (rs) {
+              rs.currentQuestion = null;
+            }
             io.to(classroomRoom(payload.classroomId)).emit("quiz:question_expired", {
               quizId: payload.quizId,
-              questionId: roomState.currentQuestion?.questionId,
+              questionId: expiredQId,
+              classroomId: payload.classroomId,
             });
           });
         }
@@ -467,7 +493,12 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
   socket.on(
     "quiz:host:add-time",
     (
-      payload: { classroomId: string; quizId: string; addSeconds: number },
+      payload: {
+        classroomId: string;
+        addSeconds: number;
+        quizId?: string;
+        questionId?: string;
+      },
       ack?: Ack
     ) => {
       try {
@@ -477,29 +508,54 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           return;
         }
 
+        const addSeconds = Math.max(1, Number(payload.addSeconds) || 10);
         const now = Date.now();
-        const currentExpiry = roomState.currentQuestion.expiresAt || now;
-        const newExpiry = Math.max(now, currentExpiry) + payload.addSeconds * 1000;
-        roomState.currentQuestion.expiresAt = newExpiry;
+        const currentExpires = roomState.currentQuestion.expiresAt || now;
+        const newExpiresAt = Math.max(now, currentExpires) + addSeconds * 1000;
 
+        roomState.currentQuestion.expiresAt = newExpiresAt;
+
+        // Reschedule SFU in-memory expiry timer
         clearQuestionTimer(payload.classroomId);
-        const remainingMs = newExpiry - now;
+        const remainingMs = newExpiresAt - now;
         if (remainingMs > 0) {
           scheduleQuestionExpiry(payload.classroomId, Math.ceil(remainingMs / 1000), () => {
+            const rs = getRoomQuiz(payload.classroomId);
+            const expiredQId = rs?.currentQuestion?.questionId || roomState.currentQuestion?.questionId;
+            if (rs) {
+              rs.currentQuestion = null;
+            }
             io.to(classroomRoom(payload.classroomId)).emit("quiz:question_expired", {
-              quizId: payload.quizId,
-              questionId: roomState.currentQuestion?.questionId,
+              quizId: payload.quizId || roomState.quizId,
+              questionId: expiredQId,
+              classroomId: payload.classroomId,
             });
           });
         }
 
+        // Notify Main Express Backend asynchronously
+        const activeQId = payload.questionId || roomState.currentQuestion.questionId;
+        const activeQuizId = payload.quizId || roomState.quizId;
+        addTime(activeQuizId, activeQId, addSeconds).catch((err: any) => {
+          console.warn(`[quiz.socket] Could not sync addTime with backend: ${errMsg(err)}`);
+        });
+
+        // Broadcast updated time to all participants in the classroom
         io.to(classroomRoom(payload.classroomId)).emit("quiz:time_added", {
-          quizId: payload.quizId,
-          expiresAt: newExpiry,
+          quizId: activeQuizId,
+          expiresAt: newExpiresAt,
+          addedSeconds: addSeconds,
           serverNow: now,
         });
 
-        safeAck(ack, { ok: true, data: { expiresAt: newExpiry, serverNow: now } });
+        safeAck(ack, {
+          ok: true,
+          data: {
+            expiresAt: newExpiresAt,
+            addedSeconds: addSeconds,
+            serverNow: now,
+          },
+        });
       } catch (err: any) {
         safeAck(ack, { ok: false, error: errMsg(err) });
       }
@@ -855,6 +911,15 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
     (payload: { classroomId: string; studentId?: string }, ack?: Ack) => {
       try {
         const roomState = getRoomQuiz(payload.classroomId);
+        const now = Date.now();
+        let activeQuestion = roomState?.currentQuestion ?? null;
+
+        // If question has already expired, clear it out so student is not served stale questions
+        if (activeQuestion && activeQuestion.expiresAt && activeQuestion.expiresAt <= now) {
+          if (roomState) roomState.currentQuestion = null;
+          activeQuestion = null;
+        }
+
         const syncData = {
           quizId: roomState ? roomState.quizId : null,
           classroomId: payload.classroomId,
@@ -862,21 +927,21 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           status: roomState?.status || "completed",
           paused: roomState?.paused || false,
           showLeaderboard: roomState?.showLeaderboard || false,
-          currentQuestion: roomState?.currentQuestion
+          currentQuestion: activeQuestion
             ? {
-                questionId: roomState.currentQuestion.questionId,
-                questionType: roomState.currentQuestion.questionType,
-                question: roomState.currentQuestion.question,
-                options: roomState.currentQuestion.options,
-                points: roomState.currentQuestion.points,
-                sequenceOrder: roomState.currentQuestion.sequenceOrder,
-                timeLimitSeconds: roomState.currentQuestion.timeLimitSeconds,
-                activatedAt: roomState.currentQuestion.activatedAt,
-                expiresAt: roomState.currentQuestion.expiresAt,
+                questionId: activeQuestion.questionId,
+                questionType: activeQuestion.questionType,
+                question: activeQuestion.question,
+                options: activeQuestion.options,
+                points: activeQuestion.points,
+                sequenceOrder: activeQuestion.sequenceOrder,
+                timeLimitSeconds: activeQuestion.timeLimitSeconds,
+                activatedAt: activeQuestion.activatedAt,
+                expiresAt: activeQuestion.expiresAt,
               }
             : null,
           leaderboard: roomState?.showLeaderboard ? roomState.leaderboard : [],
-          serverNow: Date.now(),
+          serverNow: now,
         };
 
         socket.emit("quiz:state_sync", syncData);

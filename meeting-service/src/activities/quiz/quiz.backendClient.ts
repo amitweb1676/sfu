@@ -88,3 +88,22 @@ export async function exportCsv(quizId: string, tutorId: string): Promise<string
   });
   return r.data as string;
 }
+
+export async function addTime(
+  quizId?: string,
+  questionId?: string,
+  addSeconds: number = 10
+): Promise<{ success: boolean; new_time_limit?: number }> {
+  try {
+    const res = await client.post("/api/v1/quiz/questions/add-time", {
+      quizId,
+      questionId,
+      addSeconds,
+    });
+    return res.data;
+  } catch (err: any) {
+    console.warn(`[quiz.backendClient] Failed to sync added time to Express backend: ${errMsg(err)}`);
+    return { success: false };
+  }
+}
+
