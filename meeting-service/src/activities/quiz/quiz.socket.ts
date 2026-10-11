@@ -56,7 +56,8 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
   // ---- 1. JOIN ROOM & STATE RECOVERY ----
   socket.on("quiz:join", async (payload: QuizJoinPayload, ack?: Ack) => {
     try {
-      const { classroomId, role } = payload;
+      const classroomId = payload.classroomId || (payload as any).roomId;
+      const { role } = payload;
       if (!classroomId) {
         safeAck(ack, { ok: false, error: "classroomId is required" });
         return;

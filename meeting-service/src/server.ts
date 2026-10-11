@@ -9,7 +9,7 @@ import { logger } from "./utils/logger";
 
 async function bootstrap() {
   const app = express();
-  app.use(cors({ origin: config.corsOrigin }));
+  app.use(cors({ origin: config.corsOrigin, credentials: true }));
   app.use(express.json());
 
   app.get("/health", (_req, res) => {
@@ -19,7 +19,7 @@ async function bootstrap() {
   const httpServer = http.createServer(app);
 
   const io = new Server(httpServer, {
-    cors: { origin: config.corsOrigin, methods: ["GET", "POST"] },
+    cors: { origin: config.corsOrigin, methods: ["GET", "POST"], credentials: true },
   });
 
   await createMediasoupWorker();

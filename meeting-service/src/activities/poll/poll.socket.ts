@@ -98,20 +98,27 @@ export function registerPollSocketHandlers(io: Server, socket: Socket) {
   socket.on("disconnect", () => voterBinding.delete(socket.id));
 
   // ───────── JOIN / LEAVE / SYNC ─────────
-  socket.on("poll:join", (p: { classroomId: string; voterId?: string; tutorId?: string }) => {
-    if (!p?.classroomId) return;
-    socket.join(pollRoom(p.classroomId));
-    if (isHostOrCoHost(socket, p.classroomId)) socket.join(hostRoom(p.classroomId));
+  socket.on("poll:join", (p: { classroomId?: string; roomId?: string; voterId?: string; tutorId?: string }) => {
+    const classroomId = p?.classroomId || p?.roomId;
+    if (!classroomId) return;
+    socket.join(pollRoom(classroomId));
+    if (isHostOrCoHost(socket, classroomId)) socket.join(hostRoom(classroomId));
     if (p.voterId && !voterBinding.has(socket.id)) voterBinding.set(socket.id, p.voterId);
-    sendSync(socket, p.classroomId);
+    sendSync(socket, classroomId);
   });
 
-  socket.on("poll:leave", (p: { classroomId: string }) => {
-    socket.leave(pollRoom(p.classroomId));
-    socket.leave(hostRoom(p.classroomId));
+  socket.on("poll:leave", (p: { classroomId?: string; roomId?: string }) => {
+    const classroomId = p?.classroomId || p?.roomId;
+    if (!classroomId) return;
+    socket.leave(pollRoom(classroomId));
+    socket.leave(hostRoom(classroomId));
   });
 
-  socket.on("poll:request-state-sync", (p: { classroomId: string }) => sendSync(socket, p.classroomId));
+  socket.on("poll:request-state-sync", (p: { classroomId?: string; roomId?: string }) => {
+    const classroomId = p?.classroomId || p?.roomId;
+    if (!classroomId) return;
+    sendSync(socket, classroomId);
+  });
 
   // ───────── HOST: LAUNCH ─────────
   socket.on(

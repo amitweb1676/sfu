@@ -40,7 +40,7 @@ export async function createWebRtcTransport(
   const transport = await router.createWebRtcTransport({
     listenIps: [
       {
-        ip: "0.0.0.0",
+        ip: config.mediasoup.listenIp || "0.0.0.0",
         announcedIp: announcedIp,
       },
     ],

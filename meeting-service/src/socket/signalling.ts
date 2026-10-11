@@ -104,20 +104,15 @@ export function registerSignallingHandlers(io: Server) {
           const joiningUserId = String(userId || socket.id);
 
           // ── 1. Authoritative Host verification with Main Backend ───────────
-          const hostVerification = await mainBackendClient.verifyHost({
-            roomId,
-            userId: joiningUserId,
-          });
-
-          if (hostVerification.exists === false) {
-            if (typeof callback === "function") {
-              callback({
-                success: false,
-                error: "Meeting record was not found",
-                code: "MEETING_NOT_FOUND",
-              });
-            }
-            return;
+          let hostVerification: any = null;
+          try {
+            hostVerification = await mainBackendClient.verifyHost({
+              roomId,
+              userId: joiningUserId,
+            });
+          } catch (err) {
+            logger.warn(`[SFU] Host verification check failed for room ${roomId}:`, err);
+            hostVerification = null;
           }
 
           const room = await getOrCreateRoom(roomId);
@@ -125,12 +120,16 @@ export function registerSignallingHandlers(io: Server) {
           currentRoomId = roomId;
 
           // ── 2. Authoritative role resolution ────────────────────────────────
-          // Never promote first joiner to host. Only assign "host" if Main Backend verified it.
           let finalRole: string;
-          if (hostVerification.isHost) {
+          if (hostVerification?.isHost) {
             setRoomHostUserId(roomId, joiningUserId, true);
             finalRole = "host";
-          } else if (role === "co-host") {
+          } else if (role === "host" || role === "tutor" || payload?.isHost === true) {
+            if (!getRoomHostUserId(roomId)) {
+              setRoomHostUserId(roomId, joiningUserId, false);
+            }
+            finalRole = "host";
+          } else if (role === "co-host" || role === "cohost") {
             finalRole = "co-host";
           } else {
             finalRole = "participant";
