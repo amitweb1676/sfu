@@ -9,6 +9,7 @@ export interface PollSettingsInput {
   anonymous?: boolean;
   allowChange?: boolean;
   timeLimitSeconds?: number;
+  uiMode?: "classic" | "chalkboard";
 }
 
 export interface PublicPoll {
@@ -22,6 +23,7 @@ export interface PublicPoll {
   timeLimitSeconds?: number;
   startedAt: number;
   expiresAt?: number;
+  uiMode?: "classic" | "chalkboard";
 }
 
 export interface PollResults {
@@ -40,4 +42,5 @@ export interface RoomPollState {
   voterAnswers: Map<string, any>;
   pendingVoters: Set<string>;
   finalResults?: PollResults;
+  uiMode?: "classic" | "chalkboard";
 }

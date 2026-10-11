@@ -84,6 +84,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           quizId: roomState.quizId,
           classroomId: roomState.classroomId,
           mode: roomState.mode,
+          uiMode: roomState.uiMode || "classic",
           status: roomState.status,
           paused: roomState.paused,
           showLeaderboard: roomState.showLeaderboard,
@@ -98,6 +99,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
                 timeLimitSeconds: activeQuestion.timeLimitSeconds,
                 activatedAt: activeQuestion.activatedAt,
                 expiresAt: activeQuestion.expiresAt,
+                uiMode: activeQuestion.uiMode,
               }
             : null,
           leaderboard: roomState.showLeaderboard || isHost ? roomState.leaderboard : [],
@@ -197,11 +199,13 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
         questionId: string;
         tutorId?: string;
         question?: any;
+        uiMode?: "classic" | "chalkboard";
       },
       ack?: Ack
     ) => {
       try {
         const { classroomId, quizId, questionId, tutorId } = payload;
+        const uiMode = payload.uiMode || "classic";
         if (isPollRunning(classroomId)) {
           safeAck(ack, { ok: false, error: "A poll is running. Close it first." });
           return;
@@ -239,6 +243,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           activatedAt,
           expiresAt,
           submittedStudentIds: new Set(),
+          uiMode,
         };
 
         const existingRoom = getRoomQuiz(classroomId);
@@ -247,6 +252,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           classroomId,
           tutorId: tutorId || existingRoom?.tutorId || "",
           mode: "live",
+          uiMode,
           status: "active",
           showLeaderboard: existingRoom?.showLeaderboard ?? false,
           paused: false,
@@ -258,6 +264,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
         io.to(classroomRoom(classroomId)).emit("quiz:question_activated", {
           quizId,
           ...safeQ,
+          uiMode,
           activatedAt,
           expiresAt,
           serverNow: Date.now(),
@@ -282,6 +289,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           data: {
             quizId,
             ...safeQ,
+            uiMode,
             activatedAt,
             expiresAt,
           },
@@ -309,6 +317,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
         negativeMarks?: number;
         explanation?: string;
         timeLimitSeconds?: number;
+        uiMode?: "classic" | "chalkboard";
       },
       ack?: Ack
     ) => {
@@ -317,6 +326,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           safeAck(ack, { ok: false, error: "A poll is running. Close it first." });
           return;
         }
+        const uiMode = payload.uiMode || "classic";
         const launchData = await instantLaunch(payload);
         const quizId = launchData.quizId;
         const questionId = launchData.questionId;
@@ -344,6 +354,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           activatedAt,
           expiresAt,
           submittedStudentIds: new Set(),
+          uiMode,
         };
 
         const existingRoom = getRoomQuiz(payload.classroomId);
@@ -352,6 +363,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           classroomId: payload.classroomId,
           tutorId: payload.tutorId,
           mode: "live",
+          uiMode,
           status: "active",
           showLeaderboard: existingRoom?.showLeaderboard ?? false,
           paused: false,
@@ -363,6 +375,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
         io.to(classroomRoom(payload.classroomId)).emit("quiz:question_activated", {
           quizId,
           ...safeQ,
+          uiMode,
           activatedAt,
           expiresAt,
           serverNow: Date.now(),
@@ -387,6 +400,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           data: {
             quizId,
             ...safeQ,
+            uiMode,
             activatedAt,
             expiresAt,
           },
@@ -858,11 +872,14 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
       ack?: Ack
     ) => {
       try {
-        // Get quizId from in-memory room state — frontend does not send it
         const roomState = getRoomQuiz(payload.classroomId);
         const quizId = payload.quizId || roomState?.quizId;
+
         if (!quizId) {
-          safeAck(ack, { ok: false, error: "No active quiz found to end." });
+          // Gracefully acknowledge if already ended/cleared by timer
+          clearQuestionTimer(payload.classroomId);
+          clearRoomQuiz(payload.classroomId);
+          safeAck(ack, { ok: true, data: { alreadyEnded: true } });
           return;
         }
         await completeQuiz(quizId, payload.tutorId);
@@ -924,6 +941,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
           quizId: roomState ? roomState.quizId : null,
           classroomId: payload.classroomId,
           mode: roomState?.mode || "live",
+          uiMode: roomState?.uiMode || "classic",
           status: roomState?.status || "completed",
           paused: roomState?.paused || false,
           showLeaderboard: roomState?.showLeaderboard || false,
@@ -938,6 +956,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
                 timeLimitSeconds: activeQuestion.timeLimitSeconds,
                 activatedAt: activeQuestion.activatedAt,
                 expiresAt: activeQuestion.expiresAt,
+                uiMode: activeQuestion.uiMode,
               }
             : null,
           leaderboard: roomState?.showLeaderboard ? roomState.leaderboard : [],
@@ -949,6 +968,25 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
       } catch (err: any) {
         safeAck(ack, { ok: false, error: errMsg(err) });
       }
+    }
+  );
+
+  // ---- 16. HOST: SWITCH REALTIME UI MODE (Mode 1 / Mode 2) ----
+  socket.on(
+    "quiz:host:set-ui-mode",
+    (payload: { classroomId: string; uiMode: "classic" | "chalkboard" }) => {
+      const roomState = getRoomQuiz(payload.classroomId);
+      if (roomState) {
+        roomState.uiMode = payload.uiMode;
+        if (roomState.currentQuestion) {
+          roomState.currentQuestion.uiMode = payload.uiMode;
+        }
+      }
+      // Broadcast mode switch immediately to all participants
+      io.to(classroomRoom(payload.classroomId)).emit("quiz:ui_mode_changed", {
+        classroomId: payload.classroomId,
+        uiMode: payload.uiMode,
+      });
     }
   );
 }

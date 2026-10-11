@@ -125,6 +125,7 @@ export function registerPollSocketHandlers(io: Server, socket: Socket) {
       launching.add(p.classroomId);
       try {
         const created = await api.launchPoll({ classroomId: p.classroomId, tutorId: p.tutorId, ...p.poll });
+        const uiMode = p.poll.uiMode || (created as any).uiMode || "classic";
 
         const startedAt = Date.now();
         const expiresAt = created.timeLimitSeconds ? startedAt + created.timeLimitSeconds * 1000 : undefined;
@@ -139,6 +140,7 @@ export function registerPollSocketHandlers(io: Server, socket: Socket) {
           timeLimitSeconds: created.timeLimitSeconds,
           startedAt,
           expiresAt,
+          uiMode,
         };
 
         cleanupPoll(p.classroomId);
@@ -150,6 +152,7 @@ export function registerPollSocketHandlers(io: Server, socket: Socket) {
           resultsVisible: false,
           voterAnswers: new Map(),
           pendingVoters: new Set(),
+          uiMode,
         });
 
         io.to(pollRoom(p.classroomId)).emit("poll:started", { poll, serverNow: Date.now() });
@@ -244,4 +247,23 @@ export function registerPollSocketHandlers(io: Server, socket: Socket) {
     if (!requireHost(socket, p.classroomId, ack)) return;
     try { ok(ack, await api.exportCsv(p.pollId, p.tutorId)); } catch (e) { fail(socket, ack, api.errMsg(e)); }
   });
+
+  // ---- HOST: SWITCH REALTIME POLL UI MODE ----
+  socket.on(
+    "poll:host:set-ui-mode",
+    (p: { classroomId: string; uiMode: "classic" | "chalkboard" }) => {
+      const state = getRoomPoll(p.classroomId);
+      if (state) {
+        state.uiMode = p.uiMode;
+        if (state.poll) {
+          state.poll.uiMode = p.uiMode;
+        }
+      }
+      // Broadcast mode switch immediately to all participants
+      io.to(pollRoom(p.classroomId)).emit("poll:ui_mode_changed", {
+        classroomId: p.classroomId,
+        uiMode: p.uiMode,
+      });
+    }
+  );
 }
