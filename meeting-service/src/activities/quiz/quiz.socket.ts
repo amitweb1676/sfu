@@ -437,6 +437,7 @@ export function registerQuizSocketHandlers(io: Server, socket: Socket) {
 
         io.to(classroomRoom(payload.classroomId)).emit("quiz:paused", {
           quizId: payload.quizId,
+          remainingMs: pausedRemainingMs,
           serverNow: Date.now(),
         });
         safeAck(ack, { ok: true, data: { pausedRemainingMs, serverNow: Date.now() } });
