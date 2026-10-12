@@ -121,13 +121,21 @@ export function registerSignallingHandlers(io: Server) {
 
           // ── 2. Authoritative role resolution ────────────────────────────────
           let finalRole: string;
+          const currentHostUserId = getRoomHostUserId(roomId);
+
           if (hostVerification?.isHost) {
             setRoomHostUserId(roomId, joiningUserId, true);
             finalRole = "host";
-          } else if (role === "host" || role === "tutor" || payload?.isHost === true) {
-            if (!getRoomHostUserId(roomId)) {
-              setRoomHostUserId(roomId, joiningUserId, false);
-            }
+          } else if (hostVerification?.exists && !hostVerification?.isHost) {
+            // Room exists in backend database, and this user is authoritatively NOT the host.
+            // Under NO circumstance should another teacher/tutor become host in someone else's room.
+            finalRole = (role === "co-host" || role === "cohost") ? "co-host" : "participant";
+          } else if (currentHostUserId && currentHostUserId === joiningUserId) {
+            // Recognized host rejoining/refreshing the room
+            finalRole = "host";
+          } else if (!currentHostUserId && (role === "host" || payload?.isHost === true)) {
+            // Fallback for unregistered/instant room: first user claiming host becomes the host
+            setRoomHostUserId(roomId, joiningUserId, false);
             finalRole = "host";
           } else if (role === "co-host" || role === "cohost") {
             finalRole = "co-host";
