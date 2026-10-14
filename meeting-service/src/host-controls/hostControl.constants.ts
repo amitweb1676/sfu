@@ -20,6 +20,8 @@ export const EVENTS = Object.freeze({
   FORCE_VIDEO_OFF: "host:participant-force-video-off",
   SCREEN_SHARE_DENIED: "host:screen-share-denied",
   POLICY_CHANGED: "host:policy-changed",
+  SESSION_SWITCHED_DEVICE: "session:switched-device",
+  SWITCH_DEVICE: "session:switch-device",
 });
 
 export const ROLES = Object.freeze({
@@ -47,6 +49,7 @@ export const DEFAULT_POLICY = Object.freeze({
   participantsCanUnmute: true,
   participantsCanEnableVideo: true,
   passcodeRequired: false,
+  allowMultipleDevices: false,
 });
 
 export const DEFAULT_COHOST_PERMISSIONS = Object.freeze({

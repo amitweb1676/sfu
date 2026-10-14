@@ -66,7 +66,7 @@ export function createHostControlService({ io, roomAdapter }: { io: any; roomAda
 
   function updatePolicy(socket: any, roomId: string, patch: any) {
     const { actor } = roomStateFor(socket, roomId, PERMISSIONS.MANAGE_ROOM_POLICY);
-    const allowed = ["participantScreenShareAllowed", "participantsCanUnmute", "participantsCanEnableVideo"];
+    const allowed = ["participantScreenShareAllowed", "participantsCanUnmute", "participantsCanEnableVideo", "allowMultipleDevices"];
     const cleanPatch = Object.entries(patch || {}).reduce((result: Record<string, boolean>, [key, value]) => {
       if (allowed.includes(key) && typeof value === "boolean") result[key] = value;
       return result;

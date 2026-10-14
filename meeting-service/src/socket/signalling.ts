@@ -115,7 +115,62 @@ export function registerSignallingHandlers(io: Server) {
             hostVerification = null;
           }
 
-          const room = await getOrCreateRoom(roomId);
+          let room = await getOrCreateRoom(roomId);
+
+          // ── Single-Device Session Enforcement ──
+          const controlState = getRoomControlState(roomId);
+          const allowMultipleDevices = Boolean(controlState?.policy?.allowMultipleDevices);
+          const isExplicitLoggedIn = payload?.isLoggedIn === true || (payload?.userId && !String(payload.userId).startsWith("guest-") && !String(payload.userId).startsWith("socket_"));
+
+          if (!allowMultipleDevices && isExplicitLoggedIn) {
+            const existingParticipant = Array.from(room.participants.values()).find(
+              (p) => String(p.userId) === joiningUserId && p.socketId !== socket.id
+            );
+
+            if (existingParticipant) {
+              const existingSocket = io.sockets.sockets.get(existingParticipant.socketId);
+              const isOldSocketConnected = Boolean(existingSocket && existingSocket.connected);
+
+              if (!isOldSocketConnected) {
+                // Dead socket cleanup
+                removeParticipant(roomId, existingParticipant.socketId);
+                if (!getRoom(roomId) || room.router.closed) {
+                  room = await getOrCreateRoom(roomId);
+                }
+              } else if (payload?.forceSwitch === true || payload?.switchDevice === true) {
+                logger.info(`[SFU] Session switched to new device for user ${joiningUserId}. Disconnecting old socket ${existingParticipant.socketId}`);
+                io.to(existingParticipant.socketId).emit("session:switched-device", {
+                  reason: "SWITCHED_TO_ANOTHER_DEVICE",
+                  message: "Your session has moved to another device.",
+                  newSocketId: socket.id,
+                  switchedAt: Date.now(),
+                });
+
+                removeParticipant(roomId, existingParticipant.socketId);
+                if (!getRoom(roomId) || room.router.closed) {
+                  room = await getOrCreateRoom(roomId);
+                }
+                socket.to(roomId).emit("participant-left", {
+                  socketId: existingParticipant.socketId,
+                  userId: existingParticipant.userId,
+                });
+                try {
+                  existingSocket?.leave(roomId);
+                } catch {}
+              } else {
+                logger.warn(`[SFU] Duplicate device join blocked for user ${joiningUserId} in room ${roomId}`);
+                if (typeof callback === "function") {
+                  callback({
+                    success: false,
+                    deviceConflict: true,
+                    alreadyJoined: true,
+                    message: "You are already joined to this meeting from another device.",
+                  });
+                }
+                return;
+              }
+            }
+          }
           socket.join(roomId);
           currentRoomId = roomId;
 
@@ -1217,7 +1272,52 @@ export function registerSignallingHandlers(io: Server) {
       }
     };
 
-    socket.on("leave-room", (_payload: unknown, callback?: (res: any) => void) => {
+    // Explicit device switch handler
+      socket.on("session:switch-device", async (payload: any, ack?: (res: any) => void) => {
+        const roomId = payload?.roomId || currentRoomId || getRoomBySocketId(socket.id)?.roomId;
+        const targetUserId = payload?.userId || socket.data?.userId;
+        if (!roomId || !targetUserId) {
+          if (typeof ack === "function") ack({ success: false, error: "roomId and userId required" });
+          return;
+        }
+
+        const room = getRoom(roomId);
+        if (!room) {
+          if (typeof ack === "function") ack({ success: false, error: "Room not found" });
+          return;
+        }
+
+        const existingParticipant = Array.from(room.participants.values()).find(
+          (p) => String(p.userId) === String(targetUserId) && p.socketId !== socket.id
+        );
+
+        if (existingParticipant) {
+          io.to(existingParticipant.socketId).emit("session:switched-device", {
+            reason: "SWITCHED_TO_ANOTHER_DEVICE",
+            message: "Your session has moved to another device.",
+            newSocketId: socket.id,
+            switchedAt: Date.now(),
+          });
+
+          removeParticipant(roomId, existingParticipant.socketId);
+          if (!getRoom(roomId)) {
+            await getOrCreateRoom(roomId);
+          }
+          socket.to(roomId).emit("participant-left", {
+            socketId: existingParticipant.socketId,
+            userId: existingParticipant.userId,
+          });
+
+          const existingSocket = io.sockets.sockets.get(existingParticipant.socketId);
+          try {
+            existingSocket?.leave(roomId);
+          } catch {}
+        }
+
+        if (typeof ack === "function") ack({ success: true });
+      });
+
+      socket.on("leave-room", (_payload: unknown, callback?: (res: any) => void) => {
       handleLeaveRoom(callback);
     });
 

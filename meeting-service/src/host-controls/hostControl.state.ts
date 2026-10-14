@@ -10,6 +10,7 @@ export interface RoomControlState {
     participantsCanUnmute: boolean;
     participantsCanEnableVideo: boolean;
     passcodeRequired: boolean;
+    allowMultipleDevices?: boolean;
   };
   passcode: {
     salt: string | null;
