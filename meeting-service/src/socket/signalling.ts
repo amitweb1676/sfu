@@ -88,7 +88,7 @@ export function registerSignallingHandlers(io: Server) {
     socket.on(
       "join-room",
       async (
-        payload: { roomId: string; displayName?: string; userId?: string; avatar?: string; role?: string; isHost?: boolean },
+        payload: { roomId: string; displayName?: string; userId?: string; avatar?: string; role?: string; isHost?: boolean; isTutor?: boolean; [key: string]: any },
         callback: (res: any) => void
       ) => {
         try {
@@ -126,15 +126,18 @@ export function registerSignallingHandlers(io: Server) {
           if (hostVerification?.isHost) {
             setRoomHostUserId(roomId, joiningUserId, true);
             finalRole = "host";
+          } else if (hostVerification?.hostUserId && String(hostVerification.hostUserId).trim() === joiningUserId) {
+            setRoomHostUserId(roomId, joiningUserId, true);
+            finalRole = "host";
+          } else if (currentHostUserId && currentHostUserId === joiningUserId) {
+            // Recognized host rejoining/refreshing the room
+            finalRole = "host";
           } else if (hostVerification?.exists && !hostVerification?.isHost) {
             // Room exists in backend database, and this user is authoritatively NOT the host.
             // Under NO circumstance should another teacher/tutor become host in someone else's room.
             finalRole = (role === "co-host" || role === "cohost") ? "co-host" : "participant";
-          } else if (currentHostUserId && currentHostUserId === joiningUserId) {
-            // Recognized host rejoining/refreshing the room
-            finalRole = "host";
-          } else if (!currentHostUserId && (role === "host" || payload?.isHost === true)) {
-            // Fallback for unregistered/instant room: first user claiming host becomes the host
+          } else if (!currentHostUserId && (role === "host" || payload?.isHost === true || payload?.isTutor === true)) {
+            // Fallback for unregistered/instant room: first user claiming host or tutor becomes the host
             setRoomHostUserId(roomId, joiningUserId, false);
             finalRole = "host";
           } else if (role === "co-host" || role === "cohost") {
