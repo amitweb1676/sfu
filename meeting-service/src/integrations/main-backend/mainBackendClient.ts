@@ -45,6 +45,7 @@ export const mainBackendClient = {
         exists: true,
         isHost: data.isHost === true,
         hostUserId: data.hostUserId,
+        allowMultipleDevices: Boolean(data.allowMultipleDevices),
       };
     } catch (err: any) {
       if (err.name === "AbortError") {

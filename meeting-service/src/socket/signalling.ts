@@ -119,6 +119,9 @@ export function registerSignallingHandlers(io: Server) {
 
           // ── Single-Device Session Enforcement ──
           const controlState = getRoomControlState(roomId);
+          if (hostVerification?.allowMultipleDevices && controlState?.policy) {
+            controlState.policy.allowMultipleDevices = true;
+          }
           const allowMultipleDevices = Boolean(controlState?.policy?.allowMultipleDevices);
           const isExplicitLoggedIn = payload?.isLoggedIn === true || (payload?.userId && !String(payload.userId).startsWith("guest-") && !String(payload.userId).startsWith("socket_"));
 

@@ -8,6 +8,7 @@ export interface VerifyHostResponse {
   exists?: boolean;
   isHost: boolean;
   hostUserId?: string;
+  allowMultipleDevices?: boolean;
   error?: string;
   code?: string;
 }
